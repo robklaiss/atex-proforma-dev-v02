@@ -54,8 +54,14 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             }
 
             createDatabaseBackup();
-            requestProformaAuthorization($pdo, $proformaId, $currentUserId, $requestedTo);
-            setFlash('success', 'Solicitud de autorización enviada.');
+            $authorization = requestProformaAuthorization($pdo, $proformaId, $currentUserId, $requestedTo);
+            try {
+                sendProformaAuthorizationRequestEmail($pdo, (int) $authorization['id']);
+                setFlash('success', 'Solicitud de autorización creada y enviada por email.');
+            } catch (Throwable $mailException) {
+                setFlash('success', 'Solicitud de autorización creada y visible en el sistema.');
+                setFlash('error', 'No se pudo enviar el email al autorizador: ' . $mailException->getMessage());
+            }
             redirect('/proforma-preview.php?id=' . $proformaId);
         }
 

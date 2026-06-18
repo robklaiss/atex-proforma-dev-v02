@@ -269,6 +269,55 @@ function buildProformaUpdateRequestEmailText(array $proforma, string $link): str
     return implode("\n", $lines);
 }
 
+function buildProformaAuthorizationRequestEmailHtml(array $authorization, string $link): string
+{
+    $recipientName = trim((string) ($authorization['requested_to_name'] ?? ''));
+    $requesterName = trim((string) ($authorization['requested_by_name'] ?? ''));
+    $proformaNumber = trim((string) ($authorization['proforma_number'] ?? ''));
+    $projectName = proformaProjectName($authorization);
+    $companyName = trim((string) ($authorization['company_name'] ?? ''));
+    $countryUnitName = trim((string) ($authorization['country_unit_name'] ?? ''));
+    $currencySymbol = trim((string) ($authorization['currency_symbol'] ?? ''));
+    $exchangeRate = (float) ($authorization['exchange_rate_used'] ?? 0);
+    $logoUrl = publicUrl('/assets/atex_latam_logo.png');
+
+    return '<!doctype html><html><body style="margin:0;background:#f5f6f8;font-family:Arial,Helvetica,sans-serif;color:#1f2328;">'
+        . '<div style="max-width:640px;margin:0 auto;padding:28px 18px;">'
+        . '<div style="background:#ffffff;border:1px solid #d7dce2;border-radius:8px;padding:28px;">'
+        . '<img src="' . e($logoUrl) . '" alt="ATEX LATAM" width="170" style="display:block;margin:0 0 24px;height:auto;">'
+        . '<p style="margin:0 0 14px;font-size:16px;">Hola ' . e($recipientName !== '' ? $recipientName : 'autorizador') . ',</p>'
+        . '<p style="margin:0 0 20px;line-height:1.5;"><strong>' . e($requesterName !== '' ? $requesterName : 'Un ejecutivo comercial') . '</strong> solicitó tu autorización de tipo de cambio para la proforma <strong>' . e($proformaNumber) . '</strong>.</p>'
+        . '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-top:1px solid #d7dce2;border-bottom:1px solid #d7dce2;margin:0 0 20px;padding:10px 0;">'
+        . '<tr><td style="padding:6px 0;color:#6b7280;">Proyecto</td><td style="padding:6px 0;text-align:right;font-weight:700;">' . e($projectName) . '</td></tr>'
+        . '<tr><td style="padding:6px 0;color:#6b7280;">Empresa</td><td style="padding:6px 0;text-align:right;font-weight:700;">' . e($companyName) . '</td></tr>'
+        . '<tr><td style="padding:6px 0;color:#6b7280;">Unidad país</td><td style="padding:6px 0;text-align:right;font-weight:700;">' . e($countryUnitName) . '</td></tr>'
+        . '<tr><td style="padding:6px 0;color:#6b7280;">Tipo de cambio propuesto</td><td style="padding:6px 0;text-align:right;font-weight:700;">1 US$ = ' . e(formatNumber($exchangeRate) . ' ' . $currencySymbol) . '</td></tr>'
+        . '</table>'
+        . '<p style="margin:0 0 24px;"><a href="' . e($link) . '" style="display:inline-block;background:#ff7a14;color:#ffffff;text-decoration:none;font-weight:700;border-radius:6px;padding:12px 18px;">Revisar solicitud</a></p>'
+        . '<p style="margin:0;color:#6b7280;font-size:13px;line-height:1.5;">Si el botón no abre, copie este enlace en su navegador:<br><a href="' . e($link) . '" style="color:#d95f00;">' . e($link) . '</a></p>'
+        . '</div></div></body></html>';
+}
+
+function buildProformaAuthorizationRequestEmailText(array $authorization, string $link): string
+{
+    $recipientName = trim((string) ($authorization['requested_to_name'] ?? 'autorizador'));
+    $requesterName = trim((string) ($authorization['requested_by_name'] ?? 'Un ejecutivo comercial'));
+    $exchangeRate = (float) ($authorization['exchange_rate_used'] ?? 0);
+
+    return implode("\n", [
+        'Hola ' . $recipientName . ',',
+        '',
+        $requesterName . ' solicitó tu autorización de tipo de cambio.',
+        'Proforma: ' . trim((string) ($authorization['proforma_number'] ?? '')),
+        'Proyecto: ' . proformaProjectName($authorization),
+        'Empresa: ' . trim((string) ($authorization['company_name'] ?? '')),
+        'Unidad país: ' . trim((string) ($authorization['country_unit_name'] ?? '')),
+        'Tipo de cambio propuesto: 1 US$ = ' . formatNumber($exchangeRate) . ' ' . trim((string) ($authorization['currency_symbol'] ?? '')),
+        '',
+        'Revisar solicitud: ' . $link,
+    ]);
+}
+
 function logProformaEmailAttempt(
     PDO $pdo,
     ?int $proformaId,
@@ -294,6 +343,77 @@ function logProformaEmailAttempt(
         ':error_message' => substr($errorMessage, 0, 500),
         ':sent_at' => $sentAt ?? nowIso(),
     ]);
+}
+
+function sendProformaAuthorizationRequestEmail(
+    PDO $pdo,
+    int $authorizationId,
+    ?callable $mailSender = null
+): void
+{
+    $stmt = $pdo->prepare(
+        'SELECT a.*,
+                p.proforma_number, p.project_name, p.currency_symbol, p.exchange_rate_used,
+                project.name AS canonical_project_name,
+                COALESCE(NULLIF(p.company_name_snapshot, \'\'), c.empresa) AS company_name,
+                cu.name AS country_unit_name,
+                requester.email AS requested_by_email,
+                COALESCE(NULLIF(TRIM(requester.first_name || \' \' || requester.last_name), \'\'), requester.username) AS requested_by_name,
+                target.email AS requested_to_email,
+                COALESCE(NULLIF(TRIM(target.first_name || \' \' || target.last_name), \'\'), target.username) AS requested_to_name
+         FROM proforma_authorizations a
+         JOIN proformas p ON p.id = a.proforma_id
+         JOIN clients c ON c.id = p.client_id
+         LEFT JOIN projects project ON project.id = p.project_id
+         LEFT JOIN country_units cu ON cu.id = p.country_unit_id
+         JOIN users requester ON requester.id = a.requested_by
+         JOIN users target ON target.id = a.requested_to
+         WHERE a.id = :id
+         LIMIT 1'
+    );
+    $stmt->execute([':id' => $authorizationId]);
+    $authorization = $stmt->fetch();
+    if (!is_array($authorization)) {
+        throw new RuntimeException('La solicitud de autorización no existe.');
+    }
+
+    $recipientEmail = trim((string) ($authorization['requested_to_email'] ?? ''));
+    $subject = 'Solicitud de autorización - ' . trim((string) $authorization['proforma_number']);
+    $proformaId = (int) $authorization['proforma_id'];
+    if (!filter_var($recipientEmail, FILTER_VALIDATE_EMAIL)) {
+        $error = 'El supervisor o gerente seleccionado no tiene un email válido.';
+        logProformaEmailAttempt($pdo, $proformaId, 'authorization_request', $recipientEmail, $subject, false, $error);
+        throw new RuntimeException($error);
+    }
+
+    $link = publicUrl('/proforma-authorizations.php');
+    $sentAt = nowIso();
+    $sendMail = $mailSender ?? 'smtpSendMail';
+
+    try {
+        $sendMail([
+            'to_email' => $recipientEmail,
+            'to_name' => (string) ($authorization['requested_to_name'] ?? ''),
+            'reply_to_email' => (string) ($authorization['requested_by_email'] ?? ''),
+            'reply_to_name' => (string) ($authorization['requested_by_name'] ?? ''),
+            'subject' => $subject,
+            'html' => buildProformaAuthorizationRequestEmailHtml($authorization, $link),
+            'text' => buildProformaAuthorizationRequestEmailText($authorization, $link),
+        ]);
+        logProformaEmailAttempt($pdo, $proformaId, 'authorization_request', $recipientEmail, $subject, true, '', $sentAt);
+    } catch (Throwable $exception) {
+        logProformaEmailAttempt(
+            $pdo,
+            $proformaId,
+            'authorization_request',
+            $recipientEmail,
+            $subject,
+            false,
+            substr($exception->getMessage(), 0, 500),
+            $sentAt
+        );
+        throw $exception;
+    }
 }
 
 function sendProformaCustomerEmail(PDO $pdo, int $proformaId): void
