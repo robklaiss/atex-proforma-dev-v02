@@ -160,7 +160,7 @@ function dashboardMetrics(PDO $pdo, array $filters): array
                 SUM(CASE WHEN " . $status . " = 'OPEN' THEN 1 ELSE 0 END) AS pending,
                 COALESCE(SUM(p.total), 0) AS emitted_usd,
                 COALESCE(SUM(CASE WHEN " . $status . " = 'WON' THEN p.total ELSE 0 END), 0) AS won_usd" .
-        $baseSql . ' GROUP BY unit ORDER BY unit COLLATE NOCASE'
+        $baseSql . ' GROUP BY ' . $unit . ' ORDER BY unit COLLATE NOCASE'
     );
     $unitStmt->execute($params);
     $units = dashboardNormalizeRows($unitStmt->fetchAll(), 'unit');
@@ -173,14 +173,17 @@ function dashboardMetrics(PDO $pdo, array $filters): array
                 SUM(CASE WHEN " . $status . " = 'OPEN' THEN 1 ELSE 0 END) AS pending,
                 COALESCE(SUM(p.total), 0) AS emitted_usd,
                 COALESCE(SUM(CASE WHEN " . $status . " = 'WON' THEN p.total ELSE 0 END), 0) AS won_usd" .
-        $baseSql . ' GROUP BY seller_id, seller, unit ORDER BY unit COLLATE NOCASE, seller COLLATE NOCASE'
+        $baseSql . ' GROUP BY COALESCE(p.seller_id, p.created_by),
+                     COALESCE(NULLIF(TRIM(seller.first_name || \' \' || seller.last_name), \'\'), seller.username, p.signer_name, \'Sin ejecutivo\'),
+                     ' . $unit . '
+                     ORDER BY unit COLLATE NOCASE, seller COLLATE NOCASE'
     );
     $sellerStmt->execute($params);
     $sellers = dashboardNormalizeRows($sellerStmt->fetchAll(), 'seller');
 
     $evolutionStmt = $pdo->prepare(
         "SELECT strftime('%Y-%m', p.emission_date) AS period, " . $unit . ' AS unit, COUNT(*) AS emitted' .
-        $baseSql . ' GROUP BY period, unit ORDER BY period, unit COLLATE NOCASE'
+        $baseSql . " GROUP BY strftime('%Y-%m', p.emission_date), " . $unit . ' ORDER BY period, unit COLLATE NOCASE'
     );
     $evolutionStmt->execute($params);
 

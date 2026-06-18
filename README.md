@@ -236,6 +236,113 @@ Prueba automatizada:
 php tests/dashboard_stage6_test.php
 ```
 
+## Pruebas
+
+Ejecutar la validación completa desde la raíz:
+
+```bash
+for file in app/*.php public/*.php scripts/*.php tests/*.php; do php -l "$file"; done
+php tests/project_stage1_test.php
+php tests/currency_stage2_test.php
+php tests/commercial_stage3_test.php
+php tests/authorization_stage4_test.php
+php tests/pdf_notes_stage5_test.php
+php tests/dashboard_stage6_test.php
+php tests/preproduction_stage7_test.php
+sqlite3 storage/database/app.sqlite "PRAGMA integrity_check;"
+sqlite3 storage/database/app.sqlite "PRAGMA foreign_key_check;"
+```
+
+`foreign_key_check` termina correctamente sin imprimir filas.
+
+## Roles y permisos
+
+| Acción | Administrador | Director | Gerente | Supervisor | Ejecutivo comercial | Asistente comercial |
+| --- | --- | --- | --- | --- | --- | --- |
+| Cambio de divisas | Sí | Sí | Sí | Sí | No | No |
+| Notas y disclaimers | Sí | Sí | Sí | Sí | No | No |
+| Dashboard gerencial | Sí | Sí | Sí | Sí | No | No |
+| Crear/editar proformas | Sí | No | Sí | Sí | Sí | No |
+| Solicitar autorización | Sí | No | Sí | Sí | Sí | No |
+| Decidir autorización asignada | Sí | No | Sí | Sí | No | No |
+| Cambiar estado comercial | Sí | Sí | Sí | Sí | Sí | No |
+| Descargar proformas visibles autorizadas | Sí | Sí | Sí | Sí | Sí | No |
+
+Las proformas locales `PENDING` o `REJECTED` no pueden descargarse como PDF final, independientemente del rol. La visibilidad comercial también limita qué proformas puede abrir cada usuario: Administrador y Director ven todo; Gerente ve su unidad y equipo; Supervisor ve su equipo; Ejecutivo ve las propias; Asistente solo accede a su perfil.
+
+## Flujos operativos
+
+Flujo de proforma:
+
+1. Seleccionar o crear proyecto.
+2. Buscar o crear empresa por RUC.
+3. Seleccionar, crear o asociar contacto y correo.
+4. Elegir unidad, moneda, vendedor, validez e ítems.
+5. Guardar. La emisión conserva snapshots comerciales y genera PDF/link.
+6. Editar una emisión crea una nueva versión; nunca sobrescribe la anterior.
+7. Actualizar el estado comercial a Pendiente, Ganada, Perdida o Cancelada.
+
+Flujo de autorización:
+
+1. Una proforma USD queda `NOT_REQUIRED`.
+2. Una proforma local queda `PENDING` y bloquea la descarga final.
+3. El creador solicita autorización a Supervisor o Gerente de la unidad.
+4. El autorizador confirma el cambio general, define un cambio especial o rechaza con comentario.
+5. Al aprobar, se actualiza el snapshot de cambio y se regenera el PDF.
+
+Flujo de dashboard:
+
+1. Abrir `Indicadores`.
+2. Filtrar por fecha, país, ejecutivo, estado comercial o moneda.
+3. Revisar totales Latam, métricas por país, evolución y detalle por ejecutivo.
+4. Los montos comparables usan el total base histórico en USD.
+
+## Datos demo controlados
+
+El script idempotente crea usuarios QA, empresas y relaciones de contacto sin datos reales:
+
+```bash
+export DEMO_USER_PASSWORD='una-clave-temporal-segura'
+php scripts/seed_demo.php
+```
+
+Usuarios creados: `qa-director`, `qa-manager`, `qa-supervisor`, `qa-executive` y `qa-assistant`. Antes de producción, eliminar o deshabilitar estos usuarios, o cambiar sus credenciales.
+
+La base validada incluye ejemplos USD, moneda local pendiente/aprobada/rechazada, estados Ganada/Perdida, una empresa con dos contactos, un contacto asociado a dos empresas, una observación multipágina y dashboard con Paraguay y Colombia.
+
+## Archivos generados y backups
+
+- Base SQLite: `storage/database/app.sqlite`.
+- PDFs generados: `storage/proformas/`.
+- Backups: `storage/backups/`.
+- Firmas: `storage/signatures/`.
+- Renderizados temporales de QA: `tmp/pdfs/`.
+
+Crear un backup manual:
+
+```bash
+php scripts/backup.php
+```
+
+Estos paths están ignorados por Git. El PDF de la raíz `Proforma de Factura Atex Paraguay.pdf` es una plantilla de referencia versionada, no una proforma generada, y su acceso directo queda bloqueado por `.htaccess`.
+
+## Checklist antes de producción
+
+- [ ] Configurar `.env` fuera del repositorio con contraseña administrativa y SMTP vigentes.
+- [ ] Confirmar en el proveedor que las credenciales SMTP antiguas fueron rotadas.
+- [ ] Definir `APP_PUBLIC_URL`, `APP_BASE_PATH` y `APP_TIMEZONE`.
+- [ ] Servir únicamente por HTTPS y verificar que la cookie de sesión tenga `Secure`, `HttpOnly` y `SameSite=Lax`.
+- [ ] Confirmar que el document root o las reglas Apache bloquean `app/`, `scripts/`, `storage/`, SQL y la plantilla PDF.
+- [ ] Verificar permisos de escritura de `storage/database`, `storage/backups`, `storage/proformas` y `storage/signatures`.
+- [ ] Ejecutar toda la suite, `integrity_check` y `foreign_key_check`.
+- [ ] Crear y descargar un backup restaurable.
+- [ ] Probar envío SMTP con una cuenta no sensible.
+- [ ] Eliminar/deshabilitar usuarios y datos QA que no deban pasar a producción.
+- [ ] Verificar enlaces públicos vigentes y vencidos desde la URL real.
+- [ ] Confirmar visualmente un PDF corto y uno multipágina.
+
+El informe de estabilización de Etapa 7 se encuentra en `docs/preproduction-qa-stage7.md`.
+
 ## Empresas, contactos y validez
 
 `clients` se conserva como tabla de empresas para no romper datos históricos. El RUC se normaliza en `ruc_normalized` y se busca desde la carga de proforma mediante un endpoint autenticado.

@@ -25,6 +25,17 @@ defined('DEFAULT_CURRENCY_CODE') || define('DEFAULT_CURRENCY_CODE', is_string($d
 date_default_timezone_set(getenv('APP_TIMEZONE') ?: 'America/Asuncion');
 
 if (session_status() !== PHP_SESSION_ACTIVE) {
+    $sessionBasePath = trim((string) (getenv('APP_BASE_PATH') ?: ''), '/');
+    $sessionCookiePath = $sessionBasePath === '' ? '/' : '/' . $sessionBasePath . '/';
+    ini_set('session.use_strict_mode', '1');
+    ini_set('session.use_only_cookies', '1');
+    session_set_cookie_params([
+        'lifetime' => 0,
+        'path' => $sessionCookiePath,
+        'secure' => (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'),
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
     session_start();
 }
 

@@ -118,6 +118,7 @@ $rows = [
     ['004', 'Paraguay', $paraguayId, $userIds['eva'], '2026-05-15', 'WON', 400.0, 'USD', 'USD', 'US$', 1.0, 'NOT_REQUIRED'],
     ['005', 'Colombia', $colombiaId, $userIds['carlos'], '2026-06-05', 'WON', 500.0, 'COP', 'LOCAL', 'COL$', 4100.0, 'APPROVED'],
     ['006', 'Colombia', $colombiaId, $userIds['carlos'], '2026-06-06', 'CANCELLED', 600.0, 'USD', 'USD', 'US$', 1.0, 'NOT_REQUIRED'],
+    ['007', 'Colombia', $colombiaId, $userIds['admin'], '2026-06-07', 'LOST', 700.0, 'USD', 'USD', 'US$', 1.0, 'NOT_REQUIRED'],
 ];
 foreach ($rows as $index => [$suffix, $country, $unitId, $sellerId, $date, $commercialStatus, $total, $currencyCode, $currencyMode, $currencySymbol, $rate, $authorizationStatus]) {
     $insertProforma->execute([
@@ -161,6 +162,7 @@ stage6AssertSame(1, $byUnit['Paraguay']['rejected'], 'dashboard calcula rechazad
 stage6AssertSame(33.33333333333333, $byUnit['Paraguay']['effectiveness'], 'dashboard calcula efectividad correctamente');
 stage6AssertSame(600.0, $byUnit['Paraguay']['emitted_usd'], 'montos Latam se calculan en USD base');
 stage6AssertSame(200.0, $byUnit['Paraguay']['won_usd'], 'proforma local usa total USD guardado');
+stage6AssertSame(3, $byUnit['Colombia']['emitted'], 'dashboard agrupa por país aunque el firmante pertenezca a otra unidad');
 
 $evaRows = array_values(array_filter($metrics['sellers'], static fn (array $row): bool => $row['seller'] === 'Eva Ejecutiva'));
 stage6AssertSame(1, count($evaRows), 'dashboard agrupa por ejecutivo');
@@ -175,7 +177,7 @@ stage6AssertSame(1, dashboardTotals(dashboardMetrics($pdo, $mayFilters)['units']
 
 $countryFilters = $filters;
 $countryFilters['unit'] = 'Colombia';
-stage6AssertSame(2, dashboardTotals(dashboardMetrics($pdo, $countryFilters)['units'])['emitted'], 'filtro por país funciona');
+stage6AssertSame(3, dashboardTotals(dashboardMetrics($pdo, $countryFilters)['units'])['emitted'], 'filtro por país funciona');
 
 $sellerFilters = $filters;
 $sellerFilters['seller_id'] = $userIds['carlos'];
