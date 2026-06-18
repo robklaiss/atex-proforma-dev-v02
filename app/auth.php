@@ -41,6 +41,7 @@ function attemptLogin(string $username, string $password): bool
     $_SESSION['user_id'] = (int) $user['id'];
     $_SESSION['username'] = $user['username'];
     $_SESSION['role'] = $user['role'];
+    $_SESSION['auth_version'] = max(1, (int) ($user['auth_version'] ?? 1));
 
     return true;
 }
@@ -72,7 +73,7 @@ function currentUser(): ?array
 
     $stmt = db()->prepare(
         'SELECT id, username, role, first_name, last_name, email, phone, unit, reports_to_id,
-                commercial_position, signature_image, created_at
+                commercial_position, signature_image, auth_version, created_at
          FROM users
          WHERE id = :id'
     );
@@ -83,8 +84,16 @@ function currentUser(): ?array
         return null;
     }
 
+    $authVersion = max(1, (int) ($user['auth_version'] ?? 1));
+    $sessionAuthVersion = (int) ($_SESSION['auth_version'] ?? 0);
+    if ($sessionAuthVersion > 0 && $sessionAuthVersion !== $authVersion) {
+        unset($_SESSION['user_id'], $_SESSION['username'], $_SESSION['role'], $_SESSION['auth_version']);
+        return null;
+    }
+
     $_SESSION['username'] = $user['username'];
     $_SESSION['role'] = $user['role'];
+    $_SESSION['auth_version'] = $authVersion;
 
     return $user;
 }

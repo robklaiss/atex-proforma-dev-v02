@@ -2,6 +2,11 @@
 
 declare(strict_types=1);
 
+function proformaDisclaimersHeading(): string
+{
+    return 'Condiciones Comerciales Generales';
+}
+
 function defaultProformaDisclaimers(): array
 {
     return [

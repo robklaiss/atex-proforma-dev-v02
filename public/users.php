@@ -84,11 +84,9 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $lastName = trim((string) ($_POST['last_name'] ?? ''));
         $email = trim((string) ($_POST['email'] ?? ''));
         $phone = trim((string) ($_POST['phone'] ?? ''));
-        $countryUnitIds = validateCountryUnitIds(db(), is_array($_POST['country_unit_ids'] ?? null) ? $_POST['country_unit_ids'] : []);
         $primaryCountryUnitId = (int) ($_POST['primary_country_unit_id'] ?? 0);
-        if (!in_array($primaryCountryUnitId, $countryUnitIds, true)) {
-            throw new RuntimeException('La unidad principal debe estar incluida entre las unidades seleccionadas.');
-        }
+        $additionalCountryUnitIds = is_array($_POST['country_unit_ids'] ?? null) ? $_POST['country_unit_ids'] : [];
+        $countryUnitIds = validateCountryUnitIds(db(), array_merge([$primaryCountryUnitId], $additionalCountryUnitIds));
         $primaryCountryUnit = findCountryUnitById(db(), $primaryCountryUnitId);
         if (!$primaryCountryUnit) {
             throw new RuntimeException('La unidad principal seleccionada no es válida.');
@@ -160,7 +158,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                      SET username = :username, role = :role, first_name = :first_name, last_name = :last_name,
                          email = :email, phone = :phone, unit = :unit, reports_to_id = :reports_to_id,
                          commercial_position = :commercial_position, signature_image = :signature_image,
-                         password_hash = :password_hash
+                         password_hash = :password_hash, auth_version = auth_version + 1
                      WHERE id = :id'
                 );
                 $stmt->execute([
@@ -203,9 +201,17 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             if ($currentAdmin && $id === (int) $currentAdmin['id']) {
                 $_SESSION['username'] = $username;
                 $_SESSION['role'] = $role;
+                $authVersionStmt = db()->prepare('SELECT auth_version FROM users WHERE id = :id');
+                $authVersionStmt->execute([':id' => $id]);
+                $_SESSION['auth_version'] = (int) $authVersionStmt->fetchColumn();
             }
             syncUserCountryUnits(db(), $id, $countryUnitIds);
-            setFlash('success', 'Usuario actualizado.');
+            setFlash(
+                'success',
+                $password !== ''
+                    ? 'Usuario y contraseña actualizados. Las sesiones anteriores del usuario fueron cerradas.'
+                    : 'Usuario actualizado.'
+            );
         } else {
             if ($password === '') {
                 throw new RuntimeException('La contrasena inicial es obligatoria.');
@@ -290,6 +296,10 @@ $selectedPrimaryCountryUnitId = (int) (
     $_POST['primary_country_unit_id']
     ?? (findCountryUnitByName(db(), (string) ($edit['unit'] ?? defaultCountry()))['id'] ?? ($defaultCountryUnit['id'] ?? 0))
 );
+$selectedAdditionalCountryUnitIds = array_values(array_filter(
+    $selectedCountryUnitIds,
+    static fn (int $countryUnitId): bool => $countryUnitId !== $selectedPrimaryCountryUnitId
+));
 
 renderHeader('Usuarios');
 ?>
@@ -344,26 +354,58 @@ renderHeader('Usuarios');
             <input type="file" name="signature_image" accept="image/png">
             <span class="field-hint">PNG de hasta 2 MB. Se conserva la imagen actual si no cargas otra.</span>
         </label>
-        <label>
-            Unidad principal
-            <select name="primary_country_unit_id" required>
-                <?php foreach ($countryUnits as $countryUnit): ?>
-                    <option value="<?= (int) $countryUnit['id'] ?>" <?= $selectedPrimaryCountryUnitId === (int) $countryUnit['id'] ? 'selected' : '' ?>><?= e($countryUnit['name']) ?></option>
+        <div class="wide unit-assignment" data-unit-picker>
+            <div class="unit-assignment-heading">
+                <label>
+                    Unidad principal
+                    <select name="primary_country_unit_id" required data-primary-unit>
+                        <?php foreach ($countryUnits as $countryUnit): ?>
+                            <option value="<?= (int) $countryUnit['id'] ?>" <?= $selectedPrimaryCountryUnitId === (int) $countryUnit['id'] ? 'selected' : '' ?>>
+                                <?= e($countryUnit['name']) ?> · <?= e($countryUnit['currency_symbol']) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
+                <button class="button unit-add-button" type="button" data-add-unit>
+                    <span aria-hidden="true">+</span> Agregar unidad
+                </button>
+            </div>
+            <span class="field-hint">La unidad principal se usa en la firma y los filtros. Puedes agregar otras unidades al usuario.</span>
+            <div class="unit-assignment-list" data-additional-units>
+                <?php foreach ($selectedAdditionalCountryUnitIds as $selectedCountryUnitId): ?>
+                    <div class="unit-assignment-row" data-unit-row>
+                        <label>
+                            <span>Unidad adicional</span>
+                            <select name="country_unit_ids[]" data-additional-unit>
+                                <option value="">Seleccionar unidad</option>
+                                <?php foreach ($countryUnits as $countryUnit): ?>
+                                    <option value="<?= (int) $countryUnit['id'] ?>" <?= $selectedCountryUnitId === (int) $countryUnit['id'] ? 'selected' : '' ?>>
+                                        <?= e($countryUnit['name']) ?> · <?= e($countryUnit['currency_symbol']) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </label>
+                        <button class="button danger small" type="button" data-remove-unit>Quitar</button>
+                    </div>
                 <?php endforeach; ?>
-            </select>
-            <span class="field-hint">Se usa para jerarquía, firma y filtros existentes.</span>
-        </label>
-        <label>
-            Unidades país
-            <select name="country_unit_ids[]" class="multi-select" multiple required>
-                <?php foreach ($countryUnits as $countryUnit): ?>
-                    <option value="<?= (int) $countryUnit['id'] ?>" <?= in_array((int) $countryUnit['id'], $selectedCountryUnitIds, true) ? 'selected' : '' ?>>
-                        <?= e($countryUnit['name']) ?> · <?= e($countryUnit['currency_symbol']) ?>
-                    </option>
-                <?php endforeach; ?>
-            </select>
-            <span class="field-hint">Usa Ctrl/Cmd para seleccionar más de una unidad.</span>
-        </label>
+            </div>
+            <template data-unit-row-template>
+                <div class="unit-assignment-row" data-unit-row>
+                    <label>
+                        <span>Unidad adicional</span>
+                        <select name="country_unit_ids[]" data-additional-unit>
+                            <option value="">Seleccionar unidad</option>
+                            <?php foreach ($countryUnits as $countryUnit): ?>
+                                <option value="<?= (int) $countryUnit['id'] ?>">
+                                    <?= e($countryUnit['name']) ?> · <?= e($countryUnit['currency_symbol']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </label>
+                    <button class="button danger small" type="button" data-remove-unit>Quitar</button>
+                </div>
+            </template>
+        </div>
         <label>
             Reporta a
             <?php $selectedLeaderId = (int) ($edit['reports_to_id'] ?? 0); ?>
@@ -431,4 +473,5 @@ renderHeader('Usuarios');
         </table>
     </div>
 </section>
+<script src="<?= e(publicPath('/assets/unit-picker.js')) ?>" defer></script>
 <?php renderFooter(); ?>

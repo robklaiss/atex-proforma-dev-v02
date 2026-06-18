@@ -110,10 +110,12 @@ function loadProformaForDelivery(PDO $pdo, int $proformaId): ?array
                 c.telefono AS client_telefono,
                 c.direccion AS client_direccion,
                 c.pais AS client_pais,
+                project.name AS canonical_project_name,
                 seller.email AS seller_email,
                 COALESCE(NULLIF(TRIM(seller.first_name || \' \' || seller.last_name), \'\'), seller.username, \'\') AS seller_name
          FROM proformas p
          JOIN clients c ON c.id = p.client_id
+         LEFT JOIN projects project ON project.id = p.project_id
          LEFT JOIN users seller ON seller.id = p.seller_id
          WHERE p.id = :id'
     );

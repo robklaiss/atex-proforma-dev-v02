@@ -4,46 +4,12 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../app/bootstrap.php';
 require_once APP_PATH . '/layout.php';
+require_once APP_PATH . '/pdf.php';
 
 requireAuth();
 
 $currentUser = currentUser();
 $id = (int) ($_GET['id'] ?? 0);
-
-if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
-    try {
-        verifyCsrf();
-        $action = (string) ($_POST['action'] ?? '');
-        [$visibilitySql, $visibilityParams] = proformaVisibilityClause($currentUser, 'p', 'seller', 'c', 'preview_mark_visible');
-        $stmt = db()->prepare(
-            'SELECT p.id, p.status
-             FROM proformas p
-             JOIN clients c ON c.id = p.client_id
-             LEFT JOIN users seller ON seller.id = p.seller_id
-             WHERE p.id = :id
-               AND ' . $visibilitySql
-        );
-        $stmt->execute([':id' => $id] + $visibilityParams);
-        $existing = $stmt->fetch();
-        if (!$existing) {
-            throw new RuntimeException('La proforma seleccionada no existe.');
-        }
-
-        if ($action === 'send_customer_email') {
-            if (!canCreateProformas($currentUser)) {
-                throw new RuntimeException('No tenes permisos para enviar proformas.');
-            }
-            sendProformaCustomerEmail(db(), $id);
-            setFlash('success', 'Proforma enviada al email del cliente.');
-            redirect('/proforma-preview.php?id=' . $id);
-        }
-
-        throw new RuntimeException('Accion no valida.');
-    } catch (Throwable $exception) {
-        setFlash('error', $exception->getMessage());
-        redirect('/proforma-preview.php?id=' . $id);
-    }
-}
 
 $visibility = proformaVisibilityClause($currentUser, 'p', 'seller', 'c', 'preview_visible');
 $stmt = db()->prepare(
@@ -93,6 +59,16 @@ if (!$realDir || !$realPath || !str_starts_with($realPath, $realDir . DIRECTORY_
     <?php
     renderFooter();
     exit;
+}
+
+$pdfModifiedAt = filemtime($realPath);
+$generatorModifiedAt = filemtime(APP_PATH . '/pdf.php');
+if ($pdfModifiedAt !== false && $generatorModifiedAt !== false && $pdfModifiedAt < $generatorModifiedAt) {
+    $regeneratedPath = regenerateStoredProformaPdf(db(), $id);
+    $regeneratedRealPath = realpath($regeneratedPath);
+    if ($regeneratedRealPath !== false) {
+        $realPath = $regeneratedRealPath;
+    }
 }
 
 $publicToken = trim((string) ($proforma['public_token'] ?? ''));
@@ -146,13 +122,6 @@ $publicLink = proformaPublicLink($publicToken);
             <a class="button" href="<?= e(publicPath('/proforma-authorizations.php?proforma_id=' . $id)) ?>">Autorizar</a>
         <?php endif; ?>
     <?php endif; ?>
-    <?php if (canCreateProformas($currentUser) && $canDownloadFinal): ?>
-        <form method="post">
-            <?= csrfField() ?>
-            <input type="hidden" name="action" value="send_customer_email">
-            <button class="button primary" type="submit"><?= trim((string) ($proforma['email_sent_at'] ?? '')) !== '' ? 'Reenviar al cliente' : 'Enviar al cliente' ?></button>
-        </form>
-    <?php endif; ?>
     <span class="badge <?= e(commercialStatusBadgeClass($proforma)) ?>"><?= e(commercialStatusLabel($proforma)) ?></span>
     <?php if (canCreateProformas($currentUser)): ?>
         <a class="button" href="<?= e(publicPath('/proforma-new.php')) ?>">Nueva Proforma</a>
@@ -172,6 +141,10 @@ $publicLink = proformaPublicLink($publicToken);
         <div>
             <span class="muted">Número de proforma</span>
             <strong><?= e($proforma['proforma_number']) ?></strong>
+        </div>
+        <div class="wide">
+            <span class="muted">Nombre del proyecto</span>
+            <strong><?= e(proformaProjectName($proforma)) ?></strong>
         </div>
         <div>
             <span class="muted">Estado</span>
@@ -258,7 +231,7 @@ $publicLink = proformaPublicLink($publicToken);
         <p class="muted">Sin observaciones.</p>
     <?php endif; ?>
     <?php if ($disclaimerSnapshots !== []): ?>
-        <h3>Disclaimers</h3>
+        <h3><?= e(proformaDisclaimersHeading()) ?></h3>
         <ul>
             <?php foreach ($disclaimerSnapshots as $disclaimer): ?>
                 <li><strong><?= e($disclaimer['title_snapshot']) ?>:</strong> <?= e($disclaimer['body_snapshot']) ?></li>
@@ -285,7 +258,7 @@ $publicLink = proformaPublicLink($publicToken);
         <div class="event-list">
             <?php foreach ($events as $event): ?>
                 <article>
-                    <strong><?= e($event['event_type']) ?></strong>
+                    <strong><?= e(proformaEventLabel((string) $event['event_type'])) ?></strong>
                     <span><?= e($event['event_detail']) ?></span>
                     <small><?= e($event['user_name']) ?> · <?= e(formatDateTimeShort($event['created_at'])) ?></small>
                 </article>

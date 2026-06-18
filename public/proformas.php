@@ -56,29 +56,6 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $action = (string) ($_POST['action'] ?? '');
         $id = (int) ($_POST['id'] ?? 0);
 
-        if ($action === 'send_customer_email') {
-            if (!canCreateProformas($currentUser)) {
-                throw new RuntimeException('No tenes permisos para enviar proformas.');
-            }
-            [$visibilitySql, $visibilityParams] = proformaVisibilityClause($currentUser, 'p', 'seller', 'c', 'send_visible');
-            $stmt = db()->prepare(
-                'SELECT p.id
-                 FROM proformas p
-                 JOIN clients c ON c.id = p.client_id
-                 LEFT JOIN users seller ON seller.id = p.seller_id
-                 WHERE p.id = :id
-                   AND ' . $visibilitySql
-            );
-            $stmt->execute([':id' => $id] + $visibilityParams);
-            if (!$stmt->fetch()) {
-                throw new RuntimeException('La proforma seleccionada no existe.');
-            }
-
-            sendProformaCustomerEmail(db(), $id);
-            setFlash('success', 'Proforma enviada al email del cliente.');
-            redirect('/proformas.php');
-        }
-
         if ($action === 'mark_won') {
             if (!canChangeProformaStatus($currentUser)) {
                 throw new RuntimeException('No tenes permisos para modificar proformas.');
@@ -273,7 +250,14 @@ renderHeader('Proformas');
                         </th>
                     </tr>
                     <?php foreach ($group['proformas'] as $proforma): ?>
-                        <?php $isWon = proformaCommercialStatus($proforma) === 'WON'; ?>
+                        <?php
+                        $isWon = proformaCommercialStatus($proforma) === 'WON';
+                        $publicToken = trim((string) ($proforma['public_token'] ?? ''));
+                        if ($publicToken === '') {
+                            $publicToken = ensureProformaPublicToken(db(), (int) $proforma['id']);
+                        }
+                        $publicLink = proformaPublicLink($publicToken);
+                        ?>
                         <tr>
                             <td><?= e($proforma['proforma_number']) ?></td>
                             <td><?= e($proforma['empresa']) ?></td>
@@ -307,15 +291,12 @@ renderHeader('Proformas');
                             <td class="right"><?= e(formatProformaMoney((float) $proforma['total'], $proforma)) ?></td>
                             <td class="right">
                                 <div class="actions-cell">
+                                    <a class="button small" href="<?= e(publicPath('/proforma-preview.php?id=' . (int) $proforma['id'])) ?>">Ver</a>
                                     <?php if (canCreateProformas($currentUser) && (!$isWon || $isAdminUser)): ?>
                                         <a class="button small" href="<?= e(publicPath('/proforma-new.php?edit_id=' . (int) $proforma['id'])) ?>">Editar</a>
                                     <?php endif; ?>
                                     <?php if (canCreateProformas($currentUser)): ?>
                                         <a class="button small" href="<?= e(publicPath('/proforma-new.php?clone_id=' . (int) $proforma['id'])) ?>">Clonar</a>
-                                    <?php endif; ?>
-                                    <a class="button small" href="<?= e(publicPath('/proforma-preview.php?id=' . (int) $proforma['id'])) ?>">Ver</a>
-                                    <?php if (proformaCanDownloadFinal($proforma)): ?>
-                                        <a class="button small" href="<?= e(publicPath('/download-proforma.php?id=' . (int) $proforma['id'])) ?>">Descargar</a>
                                     <?php endif; ?>
                                     <?php if (
                                         canCreateProformas($currentUser)
@@ -324,14 +305,12 @@ renderHeader('Proformas');
                                     ): ?>
                                         <a class="button small" href="<?= e(publicPath('/proforma-authorizations.php?proforma_id=' . (int) $proforma['id'])) ?>">Autorizar</a>
                                     <?php endif; ?>
-                                    <?php if (canCreateProformas($currentUser) && proformaCanDownloadFinal($proforma)): ?>
-                                        <form method="post">
-                                            <?= csrfField() ?>
-                                            <input type="hidden" name="action" value="send_customer_email">
-                                            <input type="hidden" name="id" value="<?= (int) $proforma['id'] ?>">
-                                            <button class="button small" type="submit"><?= trim((string) ($proforma['email_sent_at'] ?? '')) !== '' ? 'Reenviar' : 'Enviar' ?></button>
-                                        </form>
+                                    <?php if (proformaCanDownloadFinal($proforma)): ?>
+                                        <a class="button small" href="<?= e(publicPath('/download-proforma.php?id=' . (int) $proforma['id'])) ?>">Descargar</a>
+                                    <?php else: ?>
+                                        <span class="button small disabled" title="<?= e(proformaDownloadBlockMessage($proforma)) ?>">Descargar</span>
                                     <?php endif; ?>
+                                    <button class="button small copy-link-button" type="button" data-copy-link="<?= e($publicLink) ?>">Copiar Link</button>
                                 </div>
                             </td>
                         </tr>
@@ -342,4 +321,34 @@ renderHeader('Proformas');
         </div>
     <?php endif; ?>
 </section>
+<script>
+document.querySelectorAll('.copy-link-button').forEach((button) => {
+    button.addEventListener('click', async () => {
+        const link = button.dataset.copyLink || '';
+        if (!link) {
+            return;
+        }
+
+        const originalLabel = button.textContent;
+        try {
+            await navigator.clipboard.writeText(link);
+        } catch (error) {
+            const input = document.createElement('textarea');
+            input.value = link;
+            input.setAttribute('readonly', '');
+            input.style.position = 'fixed';
+            input.style.opacity = '0';
+            document.body.appendChild(input);
+            input.select();
+            document.execCommand('copy');
+            input.remove();
+        }
+
+        button.textContent = 'Link copiado';
+        window.setTimeout(() => {
+            button.textContent = originalLabel;
+        }, 1600);
+    });
+});
+</script>
 <?php renderFooter(); ?>

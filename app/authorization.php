@@ -128,6 +128,24 @@ function recordProformaEvent(
     return (int) $pdo->lastInsertId();
 }
 
+function proformaEventLabel(string $eventType): string
+{
+    $eventType = strtoupper(trim($eventType));
+    $labels = [
+        'CREATED' => 'Creado',
+        'EDITED_FROM' => 'Editado por',
+        'AUTHORIZATION_REQUESTED' => 'Autorización Solicitada',
+        'AUTHORIZATION_APPROVED' => 'Autorización Aprobada',
+        'AUTHORIZATION_REJECTED' => 'Autorización Denegada',
+        'DOWNLOADED' => 'Descargado',
+        'PUBLIC_LINK_VIEWED' => 'Link Público Visualizado',
+        'EXPIRED_LINK_VIEWED' => 'Link Vencido Visualizado',
+        'COMMERCIAL_STATUS_UPDATED' => 'Estado Comercial Actualizado',
+    ];
+
+    return $labels[$eventType] ?? ucfirst(strtolower(str_replace('_', ' ', $eventType)));
+}
+
 function createInternalNotification(
     PDO $pdo,
     int $userId,
@@ -232,7 +250,7 @@ function requestProformaAuthorization(
     $now = nowIso();
     $startedTransaction = !$pdo->inTransaction();
     if ($startedTransaction) {
-        $pdo->exec('BEGIN IMMEDIATE');
+        $pdo->beginTransaction();
     }
 
     try {
@@ -337,7 +355,7 @@ function approveProformaAuthorization(
     $now = nowIso();
     $startedTransaction = !$pdo->inTransaction();
     if ($startedTransaction) {
-        $pdo->exec('BEGIN IMMEDIATE');
+        $pdo->beginTransaction();
     }
 
     try {
@@ -437,7 +455,7 @@ function rejectProformaAuthorization(
     $now = nowIso();
     $startedTransaction = !$pdo->inTransaction();
     if ($startedTransaction) {
-        $pdo->exec('BEGIN IMMEDIATE');
+        $pdo->beginTransaction();
     }
 
     try {

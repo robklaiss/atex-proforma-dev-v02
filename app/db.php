@@ -16,6 +16,15 @@ function db(): PDO
     $GLOBALS['app_pdo']->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $GLOBALS['app_pdo']->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
     $GLOBALS['app_pdo']->exec('PRAGMA foreign_keys = ON');
+
+    if (
+        !tableExists($GLOBALS['app_pdo'], 'users')
+        || !tableExists($GLOBALS['app_pdo'], 'clients')
+        || !tableExists($GLOBALS['app_pdo'], 'proformas')
+    ) {
+        runMigrations($GLOBALS['app_pdo']);
+    }
+
     createProjectMigrationBackupIfNeeded($GLOBALS['app_pdo']);
     createCurrencyMigrationBackupIfNeeded($GLOBALS['app_pdo']);
     createCommercialMigrationBackupIfNeeded($GLOBALS['app_pdo']);
@@ -277,6 +286,7 @@ function ensureSchemaCompatibility(PDO $pdo): void
             'reports_to_id' => 'INTEGER',
             'commercial_position' => "TEXT NOT NULL DEFAULT ''",
             'signature_image' => "TEXT NOT NULL DEFAULT ''",
+            'auth_version' => 'INTEGER NOT NULL DEFAULT 1',
         ];
         foreach ($userColumns as $column => $definition) {
             if (!columnExists($pdo, 'users', $column)) {

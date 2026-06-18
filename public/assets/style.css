@@ -95,21 +95,35 @@ a:hover {
     min-height: 0;
     flex-direction: column;
     gap: 4px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    padding-right: 4px;
 }
 
 .sidebar nav a {
+    display: block;
     color: #000;
     font: inherit;
     padding: 10px 12px;
+    border: 1px solid var(--line);
     border-radius: 6px;
+    background: #fff;
     font-weight: 700;
 }
 
 .sidebar nav a.active,
 .sidebar nav a:hover {
     color: #000;
+    border-color: rgba(255, 122, 20, 0.5);
     background: rgba(255, 122, 20, 0.14);
     text-decoration: none;
+}
+
+.sidebar nav a:focus-visible,
+.nav-group-title:focus-visible {
+    outline: 2px solid var(--orange);
+    outline-offset: 2px;
 }
 
 .nav-group {
@@ -118,10 +132,42 @@ a:hover {
 }
 
 .nav-group-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
     color: #000;
     font: inherit;
     padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #fff;
     font-weight: 700;
+    cursor: pointer;
+    list-style: none;
+}
+
+.nav-group-title::-webkit-details-marker {
+    display: none;
+}
+
+.nav-group-title:hover,
+.nav-settings[open] > .nav-group-title {
+    border-color: rgba(255, 122, 20, 0.5);
+    background: rgba(255, 122, 20, 0.14);
+}
+
+.nav-group-chevron {
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: rotate(45deg);
+    transition: transform 0.16s ease;
+}
+
+.nav-settings[open] .nav-group-chevron {
+    transform: rotate(225deg);
 }
 
 .nav-settings {
@@ -510,8 +556,62 @@ tbody tr:hover {
     min-width: 140px;
 }
 
-.multi-select {
-    min-height: 132px;
+.organizational-unit-table input {
+    min-width: 110px;
+}
+
+.organizational-unit-table td:first-child input {
+    min-width: 190px;
+}
+
+.unit-assignment {
+    display: grid;
+    gap: 8px;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fafafa;
+}
+
+.unit-assignment-heading,
+.unit-assignment-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 10px;
+}
+
+.unit-assignment-heading label,
+.unit-assignment-row label {
+    min-width: 0;
+}
+
+.unit-assignment-list {
+    display: grid;
+    gap: 8px;
+}
+
+.unit-add-button {
+    white-space: nowrap;
+}
+
+.unit-add-button span {
+    font-size: 18px;
+    line-height: 1;
+    margin-right: 3px;
+}
+
+@media (max-width: 620px) {
+    .unit-assignment-heading,
+    .unit-assignment-row {
+        grid-template-columns: 1fr;
+        align-items: stretch;
+    }
+
+    .unit-assignment-heading .button,
+    .unit-assignment-row .button {
+        justify-self: start;
+    }
 }
 
 .stats-grid {
@@ -842,6 +942,7 @@ tbody tr:hover {
 
 .actions-cell {
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
     justify-content: flex-end;
     align-items: center;
@@ -1250,6 +1351,7 @@ tbody tr:hover {
 
     .sidebar nav {
         display: none;
+        max-height: calc(100vh - 86px);
         margin-top: 12px;
         padding-top: 12px;
         border-top: 1px solid var(--line);

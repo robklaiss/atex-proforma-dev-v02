@@ -233,6 +233,9 @@ curl --fail --silent \
 
 También acepta el header `X-Health-Token`. No enviar el token en query string.
 
+Sin token o con un token incorrecto responde HTTP 401 y no ejecuta ni expone el
+resultado de las comprobaciones.
+
 Un resultado sano responde HTTP 200:
 
 ```text
@@ -242,7 +245,7 @@ Storage OK
 Environment OK
 ```
 
-Comprueba carga de la aplicación, acceso a SQLite, `PRAGMA integrity_check`, configuración de entorno y escritura en PDFs/backups. Un fallo responde HTTP 503 sin secretos ni rutas internas. Sin token la ruta queda semipública y solo expone esos estados resumidos.
+Comprueba carga de la aplicación, acceso a SQLite, `PRAGMA integrity_check`, configuración de entorno y escritura en PDFs/backups. Un fallo responde HTTP 503 sin secretos ni rutas internas.
 
 ## 9. Tests en servidor
 
@@ -263,7 +266,58 @@ sqlite3 storage/database/app.sqlite "PRAGMA foreign_key_check;"
 
 `integrity_check` debe devolver `ok`. `foreign_key_check` debe terminar sin filas.
 
-## 10. Backup
+La validación completa puede ejecutarse con un solo comando:
+
+```bash
+php scripts/validate_preproduction.php \
+  --document-root=/ruta/atex-proforma/public
+```
+
+El comando usa `APP_URL` y `HEALTHCHECK_TOKEN` del entorno, ejecuta lint, tests
+de etapas 1 a 6 y regresión de instalación limpia, validación SQLite, creación y verificación de backup,
+healthcheck autenticado/no autenticado y bloqueo HTTP de rutas sensibles.
+Se aceptan 403, 404 o una redirección explícita a `login.php` como bloqueo
+equivalente; nunca se sigue la redirección durante esta comprobación.
+
+Opciones operativas:
+
+```text
+--url=https://URL-DE-PREPRODUCCION
+--document-root=/ruta/atex-proforma/public
+--skip-http
+--skip-tests
+--skip-backup
+--allow-smtp-disabled
+```
+
+`--allow-smtp-disabled` solo permite completar una revisión técnica previa sin
+envíos. La aceptación final sigue requiriendo credenciales SMTP nuevas y una
+prueba de envío autorizada.
+
+## 10. Datos para la prueba piloto
+
+Después de instalar, crear los datos controlados:
+
+```bash
+export DEMO_USER_PASSWORD='clave-larga-y-unica'
+export DEMO_EXCHANGE_RATE_PARAGUAY='valor-vigente'
+export DEMO_EXCHANGE_RATE_COLOMBIA='valor-vigente'
+php scripts/seed_demo.php
+unset DEMO_USER_PASSWORD DEMO_EXCHANGE_RATE_PARAGUAY DEMO_EXCHANGE_RATE_COLOMBIA
+```
+
+El script es idempotente y verifica:
+
+- Director, Gerente, Supervisor, Ejecutivo y Asistente QA.
+- Empresas QA de Paraguay y Colombia.
+- Tres contactos QA.
+- Un contacto asociado a las dos empresas.
+- Un tipo de cambio activo para Paraguay y Colombia.
+
+Usar valores vigentes aprobados para el piloto; no guardar contraseñas ni tipos
+de cambio operativos en archivos versionados.
+
+## 11. Backup
 
 Backup manual:
 
@@ -279,7 +333,7 @@ storage/backups/backup_YYYY-MM-DD_HH-mm-ss.sqlite
 
 Copiar periódicamente estos archivos a almacenamiento externo cifrado. Un backup que solo existe en el mismo servidor no cubre pérdida del host.
 
-## 11. Restauración
+## 12. Restauración
 
 Antes de restaurar:
 
@@ -300,7 +354,7 @@ sqlite3 storage/database/app.sqlite "PRAGMA foreign_key_check;"
 
 Reiniciar el servicio y ejecutar el healthcheck. Nunca restaurar desde una ruta dentro de `public/`.
 
-## 12. Checklist post-deploy
+## 13. Checklist post-deploy
 
 - [ ] HTTPS activo y redirección desde HTTP.
 - [ ] `public/` configurado como document root.
@@ -325,7 +379,7 @@ Reiniciar el servicio y ejecutar el healthcheck. Nunca restaurar desde una ruta 
 - [ ] Confirmar que usuarios/datos QA no estén habilitados indebidamente.
 - [ ] Confirmar nuevamente que las credenciales SMTP antiguas fueron rotadas.
 
-## 13. Archivos que no deben desplegarse desde Git
+## 14. Archivos que no deben desplegarse desde Git
 
 Confirmar que no estén versionados:
 

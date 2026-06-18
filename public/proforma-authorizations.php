@@ -231,7 +231,7 @@ renderHeader('Autorizaciones');
                     <div><span class="muted">Unidad / moneda</span><strong><?= e($authorization['country_unit_name'] . ' · ' . $authorization['currency_symbol']) ?></strong></div>
                     <div><span class="muted">Total USD</span><strong><?= e(formatMoney((float) $authorization['total'], 'USD')) ?></strong></div>
                     <div><span class="muted">Cambio general vigente</span><strong><?= $globalRate !== null ? e('1 US$ = ' . formatNumber($globalRate) . ' ' . $authorization['currency_symbol']) : 'Sin configurar' ?></strong></div>
-                    <div><span class="muted">Total convertido</span><strong><?= $globalRate !== null ? e(formatMoney((float) $authorization['total'] * $globalRate, (string) $authorization['currency_code'])) : e(emptyFieldMarker()) ?></strong></div>
+                    <div><span class="muted">Total convertido</span><strong><?= $globalRate !== null ? e(formatMoneyWithSymbol((float) $authorization['total'] * $globalRate, (string) $authorization['currency_code'], (string) $authorization['currency_symbol'])) : e(emptyFieldMarker()) ?></strong></div>
                     <div><span class="muted">Solicitado por</span><strong><?= e($authorization['requested_by_name']) ?></strong></div>
                     <div><span class="muted">Fecha</span><strong><?= e(formatDateTimeShort($authorization['created_at'])) ?></strong></div>
                 </div>

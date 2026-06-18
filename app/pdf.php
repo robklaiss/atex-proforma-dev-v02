@@ -466,17 +466,19 @@ function drawProformaHeader(SimplePdf $pdf, array $proforma, array $client, stri
     $contentRightX = 570.0;
     $headerW = 290.0;
     $headerX = $contentRightX - $headerW;
+    $projectName = $pdf->truncate('Proyecto: ' . proformaProjectName($proforma), $headerW, 9);
     $pdf->text($headerX, 32, 'Proforma N° ' . $proforma['proforma_number'], 14, 'bold', '#000000', $headerW, 'right');
-    $pdf->text($headerX, 56, 'Emisión: ' . formatDateLong((string) $proforma['emission_date']), 10, 'regular', '#000000', $headerW, 'right');
-    $pdf->text($headerX, 76, 'Vencimiento del presupuesto: ' . formatDateLong((string) $proforma['expiration_date']), 10, 'regular', '#000000', $headerW, 'right');
+    $pdf->text($headerX, 51, $projectName, 9, 'bold', '#333333', $headerW, 'right');
+    $pdf->text($headerX, 68, 'Emisión: ' . formatDateLong((string) $proforma['emission_date']), 10, 'regular', '#000000', $headerW, 'right');
+    $pdf->text($headerX, 85, 'Vencimiento del presupuesto: ' . formatDateLong((string) $proforma['expiration_date']), 10, 'regular', '#000000', $headerW, 'right');
     $authorizationStatus = proformaAuthorizationStatus($proforma);
     if ($authorizationStatus === 'PENDING') {
-        $pdf->text($headerX, 94, 'PENDIENTE DE AUTORIZACIÓN DE TIPO DE CAMBIO', 8, 'bold', $orange, $headerW, 'right');
+        $pdf->text($headerX, 98, 'PENDIENTE DE AUTORIZACIÓN DE TIPO DE CAMBIO', 8, 'bold', $orange, $headerW, 'right');
     } elseif ($authorizationStatus === 'REJECTED') {
-        $pdf->text($headerX, 94, 'RECHAZADA - NO VÁLIDA PARA ENTREGA FINAL', 8, 'bold', '#b42318', $headerW, 'right');
+        $pdf->text($headerX, 98, 'RECHAZADA - NO VÁLIDA PARA ENTREGA FINAL', 8, 'bold', '#b42318', $headerW, 'right');
     }
 
-    $pdf->line(25, 108, 570, 108, '#999999', 0.8);
+    $pdf->line(25, 110, 570, 110, '#999999', 0.8);
     $pdf->text(25, 126, 'Empresa: ' . displayOrMarker($client['empresa'] ?? ''), 12, 'bold', '#000000');
     $pdf->text(25, 148, 'Dirección: ' . displayOrMarker($client['direccion'] ?? ''), 12, 'bold', '#000000');
     $clientRightW = 260.0;
@@ -660,7 +662,7 @@ function buildProformaNoteRecords(SimplePdf $pdf, array $proforma, float $width)
 
     $disclaimers = is_array($proforma['disclaimers'] ?? null) ? $proforma['disclaimers'] : [];
     if ($disclaimers !== []) {
-        $records[] = ['Notas y disclaimers', 10.0, 'bold', '#000000', 14.0];
+        $records[] = [proformaDisclaimersHeading(), 10.0, 'bold', '#000000', 14.0];
         foreach ($disclaimers as $disclaimer) {
             $title = trim((string) ($disclaimer['title_snapshot'] ?? $disclaimer['title'] ?? ''));
             $body = trim((string) ($disclaimer['body_snapshot'] ?? $disclaimer['body'] ?? ''));

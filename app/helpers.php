@@ -225,9 +225,25 @@ function formatMoney(float $amount, ?string $currencyCode = null): string
 {
     $currencyCode = $currencyCode === null ? defaultCurrencyCode() : normalizeCurrencyCode($currencyCode);
     $currency = currencyOptions()[$currencyCode];
-    $decimals = max(0, (int) ($currency['decimals'] ?? 2));
+    return formatMoneyWithSymbol($amount, $currencyCode, (string) $currency['symbol']);
+}
 
-    return (string) $currency['symbol'] . ' ' . number_format(
+function formatMoneyWithSymbol(float $amount, string $currencyCode, string $currencySymbol): string
+{
+    $currencyCode = strtoupper(trim($currencyCode));
+    $currency = currencyOptions()[$currencyCode] ?? [
+        'symbol' => $currencyCode !== '' ? $currencyCode : 'US$',
+        'decimals' => 2,
+        'decimal_separator' => ',',
+        'thousands_separator' => '.',
+    ];
+    $decimals = max(0, (int) ($currency['decimals'] ?? 2));
+    $currencySymbol = html_entity_decode(trim($currencySymbol), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    if ($currencySymbol === '') {
+        $currencySymbol = (string) ($currency['symbol'] ?? ($currencyCode !== '' ? $currencyCode : 'US$'));
+    }
+
+    return $currencySymbol . ' ' . number_format(
         $amount,
         $decimals,
         (string) ($currency['decimal_separator'] ?? '.'),
@@ -244,7 +260,11 @@ function formatProformaMoney(float $amount, array $proforma): string
             $symbol = trim((string) ($proforma['currency_symbol'] ?? currencySymbol(proformaCurrencyCode($proforma))));
             return ($symbol !== '' ? $symbol : currencySymbol(proformaCurrencyCode($proforma))) . ' pendiente';
         }
-        return formatMoney($converted, proformaCurrencyCode($proforma));
+        return formatMoneyWithSymbol(
+            $converted,
+            (string) ($proforma['currency_code'] ?? ''),
+            (string) ($proforma['currency_symbol'] ?? '')
+        );
     }
 
     return formatMoney($amount, 'USD');

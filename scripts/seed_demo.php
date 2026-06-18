@@ -138,7 +138,34 @@ try {
         'Administración',
         'contacto.secundario@example.test'
     );
+    createOrReuseContactForCompany(
+        $pdo,
+        (int) $colombiaCompany['id'],
+        'Contacto Demo Colombia',
+        '3000000001',
+        'Operaciones',
+        'contacto.colombia@example.test'
+    );
     associateContactWithCompany($pdo, (int) $colombiaCompany['id'], (int) $primaryContact['id']);
+
+    $demoRates = [
+        'Paraguay' => trim((string) (getenv('DEMO_EXCHANGE_RATE_PARAGUAY') ?: '')),
+        'Colombia' => trim((string) (getenv('DEMO_EXCHANGE_RATE_COLOMBIA') ?: '')),
+    ];
+    foreach ($demoRates as $country => $configuredRate) {
+        $unit = $country === 'Paraguay' ? $paraguay : $colombia;
+        if ($configuredRate !== '') {
+            if (!is_numeric($configuredRate) || (float) $configuredRate <= 0) {
+                throw new RuntimeException('El tipo de cambio demo de ' . $country . ' debe ser mayor a cero.');
+            }
+            saveExchangeRate($pdo, (int) $unit['id'], (float) $configuredRate, $adminId);
+        } elseif (!findActiveExchangeRate($pdo, (int) $unit['id'])) {
+            throw new RuntimeException(
+                'Falta un tipo de cambio activo para ' . $country
+                . '. Define DEMO_EXCHANGE_RATE_' . strtoupper($country) . '.'
+            );
+        }
+    }
 
     $wonStmt = $pdo->prepare(
         "SELECT p.id, p.commercial_status
@@ -178,3 +205,5 @@ try {
 echo "Datos demo verificados.\n";
 echo "Usuarios QA: qa-director, qa-manager, qa-supervisor, qa-executive, qa-assistant.\n";
 echo "Empresas demo: Empresa Demo Etapa 7 y Empresa Demo Colombia Etapa 7.\n";
+echo "Contactos demo: 3; el contacto principal está asociado a ambas empresas.\n";
+echo "Tipos de cambio activos verificados para Paraguay y Colombia.\n";

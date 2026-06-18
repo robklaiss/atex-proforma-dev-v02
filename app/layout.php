@@ -41,7 +41,7 @@ function renderHeader(string $title, bool $showPageHeader = true): void
     }
     if (canManageExchangeRates($currentUser)) {
         $configurationNav += [
-            '/exchange-rates.php' => 'Cambio de divisas',
+            '/exchange-rates.php' => 'Unidad Organizativa',
         ];
     }
     if (canManageDisclaimers($currentUser)) {
@@ -87,14 +87,17 @@ function renderHeader(string $title, bool $showPageHeader = true): void
                 <a href="<?= e(publicPath($href)) ?>" class="<?= $current === $href ? 'active' : '' ?>"><?= e($label) ?></a>
             <?php endforeach; ?>
             <?php if ($configurationNav): ?>
-                <div class="nav-group nav-settings">
-                    <span class="nav-group-title">Configuración</span>
+                <details class="nav-group nav-settings" <?= $configurationActive ? 'open' : '' ?>>
+                    <summary class="nav-group-title">
+                        <span>Configuración</span>
+                        <span class="nav-group-chevron" aria-hidden="true"></span>
+                    </summary>
                     <div class="nav-subnav">
                         <?php foreach ($configurationNav as $href => $label): ?>
                             <a href="<?= e(publicPath($href)) ?>" class="<?= $current === $href ? 'active' : '' ?>"><?= e($label) ?></a>
                         <?php endforeach; ?>
                     </div>
-                </div>
+                </details>
             <?php endif; ?>
         </nav>
     </aside>
@@ -136,6 +139,32 @@ function renderFooter(): void
         toggle.setAttribute('aria-expanded', String(!expanded));
         nav.classList.toggle('is-open', !expanded);
     });
+
+    var settings = nav.querySelector('.nav-settings');
+    if (settings) {
+        settings.addEventListener('toggle', function () {
+            if (!settings.open) {
+                return;
+            }
+
+            window.requestAnimationFrame(function () {
+                settings.scrollIntoView({
+                    block: 'nearest',
+                    inline: 'nearest'
+                });
+            });
+        });
+    }
+
+    var activeItem = nav.querySelector('a.active');
+    if (activeItem) {
+        window.requestAnimationFrame(function () {
+            activeItem.scrollIntoView({
+                block: 'nearest',
+                inline: 'nearest'
+            });
+        });
+    }
 })();
 </script>
 <?php endif; ?>

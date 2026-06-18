@@ -39,7 +39,17 @@ function assertThrows(callable $callback, string $label): void
     throw new RuntimeException($label . PHP_EOL . 'Se esperaba una excepción.');
 }
 
-$pdo = new PDO('sqlite::memory:');
+$databasePath = tempnam(sys_get_temp_dir(), 'atex-currency-stage2-');
+if ($databasePath === false) {
+    throw new RuntimeException('No se pudo crear la base SQLite temporal para la prueba.');
+}
+register_shutdown_function(static function () use ($databasePath): void {
+    if (is_file($databasePath)) {
+        unlink($databasePath);
+    }
+});
+
+$pdo = new PDO('sqlite:' . $databasePath);
 $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
 $pdo->exec(
@@ -129,7 +139,45 @@ assertSameValue(true, canManageExchangeRates(['role' => 'supervisor']), 'Supervi
 assertSameValue(false, canManageExchangeRates(['role' => 'commercial_executive']), 'Ejecutivo Comercial no puede gestionar cambio de divisas');
 assertSameValue(false, canManageExchangeRates(['role' => 'assistant']), 'Asistente Comercial no puede gestionar cambio de divisas');
 
+$createdUnit = saveCountryUnit($pdo, 0, [
+    'name' => 'Bolivia',
+    'currency_symbol' => 'Bs',
+    'currency_code' => 'BOB',
+], 6.9, 1);
+$boliviaId = (int) $createdUnit['id'];
+assertSameValue(true, $createdUnit['created'], 'crea una unidad organizativa');
+assertSameValue('BOB', findCountryUnitById($pdo, $boliviaId)['currency_code'], 'guarda el código de moneda de la nueva unidad');
+assertSameValue(6.9, (float) findActiveExchangeRate($pdo, $boliviaId)['rate_from_usd'], 'guarda la cotización inicial de la nueva unidad');
+
+$updatedUnit = saveCountryUnit($pdo, $boliviaId, [
+    'name' => 'Bolivia',
+    'currency_symbol' => 'Bs.',
+    'currency_code' => 'BOB',
+], 7.0, 1);
+assertSameValue(true, $updatedUnit['unit_changed'], 'edita los datos de una unidad organizativa');
+assertSameValue(true, $updatedUnit['rate_changed'], 'edita la cotización de una unidad organizativa');
+assertSameValue('Bs.', findCountryUnitById($pdo, $boliviaId)['currency_symbol'], 'conserva el nuevo símbolo de moneda');
+$boliviaSnapshot = resolveProformaCurrency($pdo, $boliviaId, 'LOCAL');
+assertSameValue('Bs. 700,00', formatProformaMoney(100, $boliviaSnapshot), 'formatea monedas agregadas con su propio símbolo');
+
+deactivateCountryUnit($pdo, $boliviaId);
+assertSameValue(0, (int) findCountryUnitById($pdo, $boliviaId)['is_active'], 'elimina la unidad mediante baja lógica');
+assertSameValue(null, findActiveExchangeRate($pdo, $boliviaId), 'desactiva la cotización de la unidad eliminada');
+seedCountryUnits($pdo);
+assertSameValue(0, (int) findCountryUnitById($pdo, $boliviaId)['is_active'], 'la inicialización no reactiva unidades eliminadas');
+$restoredUnit = saveCountryUnit($pdo, 0, [
+    'name' => 'Bolivia',
+    'currency_symbol' => 'Bs.',
+    'currency_code' => 'BOB',
+], 7.1, 1);
+assertSameValue($boliviaId, (int) $restoredUnit['id'], 'permite volver a agregar una unidad eliminada');
+deactivateCountryUnit($pdo, $boliviaId);
+
 $paraguayId = (int) $units['Paraguay']['id'];
+assertThrows(
+    static fn (): null => deactivateCountryUnit($pdo, $paraguayId),
+    'impide eliminar una unidad organizativa asignada a usuarios'
+);
 $panamaSnapshot = resolveProformaCurrency($pdo, (int) $units['Panamá']['id'], 'LOCAL');
 assertSameValue('PENDING', $panamaSnapshot['authorization_status'], 'moneda local sin cotización queda PENDING');
 assertSameValue(null, $panamaSnapshot['exchange_rate_used'], 'moneda local sin cotización no inventa un tipo de cambio');
@@ -178,9 +226,80 @@ $activeRateCount = (int) $pdo->query(
 )->fetchColumn();
 assertSameValue(1, $activeRateCount, 'mantiene un solo tipo de cambio activo por unidad país');
 
+$savedRates = saveExchangeRates($pdo, [
+    (int) $units['Paraguay']['id'] => '7600',
+    (int) $units['Colombia']['id'] => '33212',
+    (int) $units['Panamá']['id'] => '1',
+    (int) $units['República Dominicana']['id'] => '60.5',
+], 1);
+assertSameValue(3, $savedRates, 'guarda conjuntamente todos los cambios ingresados');
+assertSameValue(
+    4,
+    (int) $pdo->query('SELECT COUNT(*) FROM exchange_rates WHERE is_active = 1')->fetchColumn(),
+    'mantiene un tipo de cambio vigente para cada unidad país'
+);
+
+$historyCount = (int) $pdo->query('SELECT COUNT(*) FROM exchange_rates')->fetchColumn();
+$unchangedRates = saveExchangeRates($pdo, [
+    (int) $units['Paraguay']['id'] => '7600',
+    (int) $units['Colombia']['id'] => '33212',
+    (int) $units['Panamá']['id'] => '1',
+    (int) $units['República Dominicana']['id'] => '60.5',
+], 1);
+assertSameValue(0, $unchangedRates, 'omite valores que no cambiaron');
+assertSameValue(
+    $historyCount,
+    (int) $pdo->query('SELECT COUNT(*) FROM exchange_rates')->fetchColumn(),
+    'no duplica el historial cuando no hay cambios'
+);
+
+$updatedRates = saveExchangeRates($pdo, [
+    (int) $units['Colombia']['id'] => '34000',
+    (int) $units['Panamá']['id'] => '',
+], 1);
+assertSameValue(1, $updatedRates, 'actualiza solo los valores modificados e ignora campos vacíos');
+assertSameValue(
+    4,
+    (int) $pdo->query('SELECT COUNT(*) FROM exchange_rates WHERE is_active = 1')->fetchColumn(),
+    'actualizar un país no excluye los tipos de cambio de los demás'
+);
+
+$pdo->beginTransaction();
+$nestedSavedRates = saveExchangeRates($pdo, [
+    (int) $units['Panamá']['id'] => '1.1',
+], 1);
+assertSameValue(1, $nestedSavedRates, 'permite guardar dentro de una transacción SQLite existente');
+assertSameValue(true, $pdo->inTransaction(), 'no cierra una transacción iniciada por el proceso llamador');
+$pdo->rollBack();
+assertSameValue(
+    1.0,
+    (float) findActiveExchangeRate($pdo, (int) $units['Panamá']['id'])['rate_from_usd'],
+    'el proceso llamador conserva control sobre el rollback'
+);
+
 $stored = $pdo->query("SELECT * FROM proformas WHERE proforma_number = 'EPI-20260617-001'")->fetch();
 assertSameValue('EPI-20260617-001', $stored['proforma_number'], 'no renumera proformas históricas');
 assertSameValue(7500.0, (float) $stored['exchange_rate_used'], 'no recalcula el snapshot de una proforma emitida');
 assertSameValue('₲ 750.000', formatProformaMoney((float) $stored['total'], $stored), 'mantiene el importe histórico convertido');
+
+$pdo = null;
+$reopenedPdo = new PDO('sqlite:' . $databasePath);
+$reopenedPdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+$reopenedPdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+assertSameValue(
+    4,
+    (int) $reopenedPdo->query('SELECT COUNT(*) FROM exchange_rates WHERE is_active = 1')->fetchColumn(),
+    'los cuatro tipos de cambio permanecen guardados al reabrir la base SQLite'
+);
+assertSameValue(
+    34000.0,
+    (float) $reopenedPdo->query(
+        "SELECT er.rate_from_usd
+         FROM exchange_rates er
+         JOIN country_units cu ON cu.id = er.country_unit_id
+         WHERE cu.name = 'Colombia' AND er.is_active = 1"
+    )->fetchColumn(),
+    'la actualización permanece guardada en SQLite'
+);
 
 echo PHP_EOL . 'Pruebas de monedas, unidades y cambio de divisas completadas.' . PHP_EOL;

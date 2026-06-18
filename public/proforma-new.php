@@ -366,7 +366,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $grandTotal = $totals['total'];
 
         createDatabaseBackup();
-        $pdo->exec('BEGIN IMMEDIATE');
+        $pdo->beginTransaction();
         $pdfPath = null;
 
         try {
@@ -1064,11 +1064,26 @@ function currentCurrencyMode() {
 function currentCurrencyCode() {
     const unit = currentCountryUnit();
     const code = currentCurrencyMode() === 'LOCAL' && unit ? unit.currency_code : 'USD';
-    return Object.prototype.hasOwnProperty.call(currencyConfig, code) ? code : 'USD';
+    return /^[A-Z]{3}$/.test(String(code || '').toUpperCase()) ? String(code).toUpperCase() : 'USD';
 }
 
 function currentCurrency() {
-    return currencyConfig[currentCurrencyCode()] || currencyConfig.USD;
+    const currencyCode = currentCurrencyCode();
+    const unit = currentCountryUnit();
+    const configured = currencyConfig[currencyCode] || {
+        symbol: currencyCode,
+        decimals: 2,
+        decimal_separator: ',',
+        thousands_separator: '.',
+    };
+
+    if (currentCurrencyMode() !== 'LOCAL' || !unit || !unit.currency_symbol) {
+        return configured;
+    }
+
+    return Object.assign({}, configured, {
+        symbol: unit.currency_symbol,
+    });
 }
 
 function currentExchangeRate() {

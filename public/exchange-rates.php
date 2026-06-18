@@ -15,18 +15,82 @@ $error = null;
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     try {
         verifyCsrf();
-        $countryUnitId = (int) ($_POST['country_unit_id'] ?? 0);
-        $rateFromUsd = parseDecimalInput((string) ($_POST['rate_from_usd'] ?? '0'));
-
         createDatabaseBackup();
-        saveExchangeRate($pdo, $countryUnitId, $rateFromUsd, (int) ($currentUser['id'] ?? 0));
-        setFlash('success', 'Tipo de cambio actualizado. El valor anterior quedó en el historial.');
+        $createdBy = (int) ($currentUser['id'] ?? 0);
+        $action = (string) ($_POST['action'] ?? 'save');
+
+        if ($action === 'create') {
+            $rateFromUsd = parseOptionalExchangeRate($_POST['rate_from_usd'] ?? null);
+            if ($rateFromUsd === null) {
+                throw new RuntimeException('La cotización ante el dólar es obligatoria.');
+            }
+
+            saveCountryUnit(
+                $pdo,
+                0,
+                [
+                    'name' => $_POST['name'] ?? '',
+                    'currency_symbol' => $_POST['currency_symbol'] ?? '',
+                    'currency_code' => $_POST['currency_code'] ?? '',
+                ],
+                $rateFromUsd,
+                $createdBy
+            );
+            setFlash('success', 'Unidad organizativa creada.');
+        } elseif ($action === 'delete') {
+            deactivateCountryUnit($pdo, (int) ($_POST['country_unit_id'] ?? 0));
+            setFlash('success', 'Unidad organizativa eliminada.');
+        } elseif ($action === 'save') {
+            $submittedUnits = $_POST['units'] ?? [];
+            $submittedRates = $_POST['rates'] ?? [];
+            if (!is_array($submittedUnits) || !is_array($submittedRates)) {
+                throw new RuntimeException('Los datos enviados no son válidos.');
+            }
+
+            $pdo->beginTransaction();
+            try {
+                $updated = 0;
+                foreach ($submittedUnits as $countryUnitId => $submittedUnit) {
+                    if (!is_array($submittedUnit)) {
+                        throw new RuntimeException('Los datos de una unidad país no son válidos.');
+                    }
+
+                    $result = saveCountryUnit(
+                        $pdo,
+                        (int) $countryUnitId,
+                        $submittedUnit,
+                        parseOptionalExchangeRate($submittedRates[$countryUnitId] ?? null),
+                        $createdBy
+                    );
+                    if ($result['unit_changed'] || $result['rate_changed']) {
+                        $updated++;
+                    }
+                }
+                $pdo->commit();
+            } catch (Throwable $exception) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                throw $exception;
+            }
+
+            setFlash(
+                'success',
+                $updated > 0
+                    ? ($updated === 1 ? 'Se actualizó 1 unidad organizativa.' : 'Se actualizaron ' . $updated . ' unidades organizativas.')
+                    : 'No había cambios para guardar.'
+            );
+        } else {
+            throw new RuntimeException('Acción no válida.');
+        }
+
         redirect('/exchange-rates.php');
     } catch (Throwable $exception) {
         $error = $exception->getMessage();
     }
 }
 
+$units = countryUnits($pdo);
 $activeRates = [];
 foreach ($units as $unit) {
     $rate = findActiveExchangeRate($pdo, (int) $unit['id']);
@@ -44,59 +108,127 @@ $history = $pdo->query(
      ORDER BY er.created_at DESC, er.id DESC'
 )->fetchAll();
 
-renderHeader('Cambio de divisas');
+renderHeader('Unidad Organizativa');
 ?>
 <?php if ($error): ?><div class="flash error"><?= e($error) ?></div><?php endif; ?>
 
 <section class="panel">
-    <h2>Tipos de cambio vigentes</h2>
-    <p class="muted">La lista de precios está expresada en USD. Registra cuántas unidades de moneda local equivalen a 1 US$.</p>
-    <div class="table-wrap">
-        <table>
-            <thead>
-            <tr>
-                <th>Unidad país</th>
-                <th>Moneda local</th>
-                <th>Tipo de cambio vigente</th>
-                <th>Actualizar</th>
-            </tr>
-            </thead>
-            <tbody>
-            <?php foreach ($units as $unit): ?>
-                <?php $activeRate = $activeRates[(int) $unit['id']] ?? null; ?>
+    <h2>Nueva unidad organizativa</h2>
+    <p class="muted">Agrega una unidad país con su moneda local y la cotización de esa moneda ante 1 US$.</p>
+    <form method="post" class="grid-form compact">
+        <?= csrfField() ?>
+        <input type="hidden" name="action" value="create">
+        <label>
+            Unidad país
+            <input name="name" maxlength="120" required placeholder="Ej. Perú">
+        </label>
+        <label>
+            Símbolo de moneda
+            <input name="currency_symbol" maxlength="16" required placeholder="Ej. S/">
+        </label>
+        <label>
+            Código de moneda
+            <input name="currency_code" maxlength="3" pattern="[A-Za-z]{3}" required placeholder="Ej. PEN">
+        </label>
+        <label>
+            Cotización ante el dólar
+            <input type="number" name="rate_from_usd" min="0.000001" step="0.000001" required placeholder="Moneda local por 1 US$">
+        </label>
+        <div class="form-actions wide">
+            <button class="button primary" type="submit">Agregar unidad</button>
+        </div>
+    </form>
+</section>
+
+<section class="panel">
+    <h2>Unidades organizativas</h2>
+    <p class="muted">La lista de precios está expresada en USD. Puedes editar los datos y guardar todas las modificaciones en conjunto.</p>
+    <form method="post">
+        <?= csrfField() ?>
+        <input type="hidden" name="action" value="save">
+        <div class="table-wrap">
+            <table class="organizational-unit-table">
+                <thead>
                 <tr>
-                    <td><?= e($unit['name']) ?></td>
-                    <td><?= e($unit['currency_symbol']) ?> · <?= e($unit['currency_code']) ?></td>
-                    <td>
-                        <?php if ($activeRate): ?>
-                            1 US$ = <?= e(formatNumber((float) $activeRate['rate_from_usd'])) ?> <?= e($unit['currency_symbol']) ?>
-                        <?php else: ?>
-                            <span class="badge danger">Sin configurar</span>
-                        <?php endif; ?>
-                    </td>
-                    <td>
-                        <form method="post" class="exchange-rate-form">
-                            <?= csrfField() ?>
-                            <input type="hidden" name="country_unit_id" value="<?= (int) $unit['id'] ?>">
-                            <label class="sr-only" for="rate-<?= (int) $unit['id'] ?>">Tipo de cambio para <?= e($unit['name']) ?></label>
+                    <th>Unidad país</th>
+                    <th>Símbolo</th>
+                    <th>Código</th>
+                    <th>Cotización ante 1 US$</th>
+                    <th></th>
+                </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($units as $unit): ?>
+                    <?php $activeRate = $activeRates[(int) $unit['id']] ?? null; ?>
+                    <tr>
+                        <td>
+                            <label class="sr-only" for="unit-name-<?= (int) $unit['id'] ?>">Unidad país</label>
+                            <input
+                                id="unit-name-<?= (int) $unit['id'] ?>"
+                                name="units[<?= (int) $unit['id'] ?>][name]"
+                                maxlength="120"
+                                required
+                                value="<?= e($unit['name']) ?>"
+                            >
+                        </td>
+                        <td>
+                            <label class="sr-only" for="unit-symbol-<?= (int) $unit['id'] ?>">Símbolo de moneda</label>
+                            <input
+                                id="unit-symbol-<?= (int) $unit['id'] ?>"
+                                name="units[<?= (int) $unit['id'] ?>][currency_symbol]"
+                                maxlength="16"
+                                required
+                                value="<?= e($unit['currency_symbol']) ?>"
+                            >
+                        </td>
+                        <td>
+                            <label class="sr-only" for="unit-code-<?= (int) $unit['id'] ?>">Código de moneda</label>
+                            <input
+                                id="unit-code-<?= (int) $unit['id'] ?>"
+                                name="units[<?= (int) $unit['id'] ?>][currency_code]"
+                                maxlength="3"
+                                pattern="[A-Za-z]{3}"
+                                required
+                                value="<?= e($unit['currency_code']) ?>"
+                            >
+                        </td>
+                        <td>
+                            <label class="sr-only" for="rate-<?= (int) $unit['id'] ?>">Cotización para <?= e($unit['name']) ?></label>
                             <input
                                 id="rate-<?= (int) $unit['id'] ?>"
                                 type="number"
-                                name="rate_from_usd"
+                                name="rates[<?= (int) $unit['id'] ?>]"
                                 min="0.000001"
                                 step="0.000001"
-                                required
                                 value="<?= e($activeRate ? (string) $activeRate['rate_from_usd'] : '') ?>"
                                 placeholder="Ej. 7500"
                             >
-                            <button class="button primary small" type="submit">Guardar</button>
-                        </form>
-                    </td>
-                </tr>
-            <?php endforeach; ?>
-            </tbody>
-        </table>
-    </div>
+                        </td>
+                        <td class="right">
+                            <button
+                                class="button danger small"
+                                type="submit"
+                                form="delete-unit-<?= (int) $unit['id'] ?>"
+                                formnovalidate
+                                onclick="return window.confirm('¿Eliminar esta unidad organizativa? El historial de cotizaciones se conservará.');"
+                            >Eliminar</button>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        <div class="form-actions">
+            <button class="button primary" type="submit">Guardar cambios</button>
+        </div>
+    </form>
+    <?php foreach ($units as $unit): ?>
+        <form method="post" id="delete-unit-<?= (int) $unit['id'] ?>">
+            <?= csrfField() ?>
+            <input type="hidden" name="action" value="delete">
+            <input type="hidden" name="country_unit_id" value="<?= (int) $unit['id'] ?>">
+        </form>
+    <?php endforeach; ?>
 </section>
 
 <section class="panel">

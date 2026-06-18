@@ -147,7 +147,7 @@ $disclaimerSnapshots = loadProformaDisclaimerSnapshots(db(), (int) $proforma['id
                         <p class="proforma-notes"><?= e(proformaObservations($proforma)) ?></p>
                     <?php endif; ?>
                     <?php if ($disclaimerSnapshots !== []): ?>
-                        <h2>Notas y disclaimers</h2>
+                        <h2><?= e(proformaDisclaimersHeading()) ?></h2>
                         <ul>
                             <?php foreach ($disclaimerSnapshots as $disclaimer): ?>
                                 <li><strong><?= e($disclaimer['title_snapshot']) ?>:</strong> <?= e($disclaimer['body_snapshot']) ?></li>

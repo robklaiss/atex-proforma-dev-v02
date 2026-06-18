@@ -348,5 +348,9 @@ assertTrueValue(
     (int) $pdo->query('SELECT COUNT(*) FROM proforma_events')->fetchColumn() >= 6,
     'solicitudes y decisiones registran trazabilidad'
 );
+assertSameValue('Creado', proformaEventLabel('CREATED'), 'traduce evento de creación');
+assertSameValue('Editado por', proformaEventLabel('EDITED_FROM'), 'traduce evento de edición');
+assertSameValue('Autorización Solicitada', proformaEventLabel('AUTHORIZATION_REQUESTED'), 'traduce solicitud de autorización');
+assertSameValue('Autorización Denegada', proformaEventLabel('AUTHORIZATION_REJECTED'), 'traduce rechazo de autorización');
 
 echo PHP_EOL . 'Pruebas de autorización, acciones, versionado y firma de Etapa 4 completadas.' . PHP_EOL;

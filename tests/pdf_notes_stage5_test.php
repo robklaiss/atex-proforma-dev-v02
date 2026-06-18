@@ -177,7 +177,11 @@ generateProformaPdf($baseProforma, $client, [$item], $taxSummary, $shortPdf);
 stage5AssertSame(1, pdfPageCount($shortPdf), 'observaciones cortas no fuerzan una segunda hoja');
 $shortRaw = (string) file_get_contents($shortPdf);
 stage5AssertTrue(str_contains($shortRaw, 'Observaci'), 'observaciones cortas aparecen en PDF');
-stage5AssertTrue(str_contains($shortRaw, 'Notas y disclaimers'), 'disclaimers aparecen en PDF');
+stage5AssertTrue(str_contains($shortRaw, 'Proyecto: Proyecto Notas'), 'cabecera del PDF identifica el proyecto');
+stage5AssertTrue(
+    str_contains($shortRaw, proformaDisclaimersHeading()),
+    'disclaimers aparecen en PDF bajo Condiciones Comerciales Generales'
+);
 
 $longProforma = $baseProforma;
 $longProforma['commercial_conditions'] = str_repeat(

@@ -40,25 +40,11 @@ function seedCountryUnits(PDO $pdo): void
          (name, currency_symbol, currency_code, is_active, created_at, updated_at)
          VALUES (:name, :currency_symbol, :currency_code, 1, :created_at, :updated_at)'
     );
-    $update = $pdo->prepare(
-        'UPDATE country_units
-         SET currency_symbol = :currency_symbol,
-             currency_code = :currency_code,
-             is_active = 1,
-             updated_at = :updated_at
-         WHERE name = :name'
-    );
     $now = nowIso();
 
     foreach (countryUnitDefaults() as $unit) {
         $select->execute([':name' => $unit['name']]);
         if ($select->fetchColumn()) {
-            $update->execute([
-                ':currency_symbol' => $unit['currency_symbol'],
-                ':currency_code' => $unit['currency_code'],
-                ':updated_at' => $now,
-                ':name' => $unit['name'],
-            ]);
             continue;
         }
 
@@ -98,6 +84,235 @@ function findCountryUnitById(PDO $pdo, int $countryUnitId): ?array
     $stmt->execute([':id' => $countryUnitId]);
     $unit = $stmt->fetch();
     return is_array($unit) ? $unit : null;
+}
+
+function normalizeCountryUnitPayload(array $payload): array
+{
+    $name = trim((string) ($payload['name'] ?? ''));
+    $currencySymbol = trim((string) ($payload['currency_symbol'] ?? ''));
+    $currencyCode = strtoupper(trim((string) ($payload['currency_code'] ?? '')));
+
+    if ($name === '') {
+        throw new RuntimeException('El nombre de la unidad país es obligatorio.');
+    }
+    if (mb_strlen($name) > 120) {
+        throw new RuntimeException('El nombre de la unidad país no puede superar 120 caracteres.');
+    }
+    if ($currencySymbol === '') {
+        throw new RuntimeException('El símbolo de moneda es obligatorio.');
+    }
+    if (mb_strlen($currencySymbol) > 16) {
+        throw new RuntimeException('El símbolo de moneda no puede superar 16 caracteres.');
+    }
+    if (preg_match('/^[A-Z]{3}$/', $currencyCode) !== 1) {
+        throw new RuntimeException('El código de moneda debe contener 3 letras, por ejemplo PYG.');
+    }
+
+    return [
+        'name' => $name,
+        'currency_symbol' => $currencySymbol,
+        'currency_code' => $currencyCode,
+    ];
+}
+
+function parseOptionalExchangeRate(mixed $value): ?float
+{
+    if ($value === null || trim((string) $value) === '') {
+        return null;
+    }
+
+    $rate = is_float($value) || is_int($value)
+        ? (float) $value
+        : parseDecimalInput((string) $value);
+    if (!is_finite($rate) || $rate <= 0) {
+        throw new RuntimeException('La cotización ante el dólar debe ser mayor a cero.');
+    }
+
+    return $rate;
+}
+
+function saveCountryUnit(
+    PDO $pdo,
+    int $countryUnitId,
+    array $payload,
+    ?float $rateFromUsd,
+    int $createdBy
+): array {
+    $unitData = normalizeCountryUnitPayload($payload);
+    if ($createdBy <= 0) {
+        throw new RuntimeException('No se pudo identificar al usuario que registra la unidad país.');
+    }
+
+    $duplicate = $pdo->prepare(
+        'SELECT id, is_active
+         FROM country_units
+         WHERE name = :name COLLATE NOCASE
+           AND id <> :id
+         LIMIT 1'
+    );
+    $duplicate->execute([
+        ':name' => $unitData['name'],
+        ':id' => $countryUnitId,
+    ]);
+    $duplicateUnit = $duplicate->fetch();
+    $reactivateId = 0;
+    if (is_array($duplicateUnit)) {
+        if ($countryUnitId > 0 || (int) ($duplicateUnit['is_active'] ?? 0) === 1) {
+            throw new RuntimeException('Ya existe una unidad país con ese nombre.');
+        }
+        $reactivateId = (int) $duplicateUnit['id'];
+    }
+
+    $startedTransaction = !$pdo->inTransaction();
+    if ($startedTransaction) {
+        $pdo->beginTransaction();
+    }
+
+    try {
+        $now = nowIso();
+        $created = false;
+        $unitChanged = false;
+
+        if ($countryUnitId > 0 || $reactivateId > 0) {
+            if ($countryUnitId <= 0) {
+                $countryUnitId = $reactivateId;
+                $created = true;
+            }
+            $current = findCountryUnitById($pdo, $countryUnitId);
+            if (!$current || (!$created && (int) ($current['is_active'] ?? 0) !== 1)) {
+                throw new RuntimeException('La unidad país seleccionada no es válida.');
+            }
+
+            $unitChanged = $created
+                || (string) $current['name'] !== $unitData['name']
+                || (string) $current['currency_symbol'] !== $unitData['currency_symbol']
+                || (string) $current['currency_code'] !== $unitData['currency_code'];
+            if ($unitChanged) {
+                $update = $pdo->prepare(
+                    'UPDATE country_units
+                     SET name = :name,
+                         currency_symbol = :currency_symbol,
+                         currency_code = :currency_code,
+                         is_active = 1,
+                         updated_at = :updated_at
+                     WHERE id = :id
+                       AND is_active = :expected_active'
+                );
+                $update->execute([
+                    ':name' => $unitData['name'],
+                    ':currency_symbol' => $unitData['currency_symbol'],
+                    ':currency_code' => $unitData['currency_code'],
+                    ':updated_at' => $now,
+                    ':id' => $countryUnitId,
+                    ':expected_active' => $created ? 0 : 1,
+                ]);
+            }
+        } else {
+            $insert = $pdo->prepare(
+                'INSERT INTO country_units
+                 (name, currency_symbol, currency_code, is_active, created_at, updated_at)
+                 VALUES (:name, :currency_symbol, :currency_code, 1, :created_at, :updated_at)'
+            );
+            $insert->execute([
+                ':name' => $unitData['name'],
+                ':currency_symbol' => $unitData['currency_symbol'],
+                ':currency_code' => $unitData['currency_code'],
+                ':created_at' => $now,
+                ':updated_at' => $now,
+            ]);
+            $countryUnitId = (int) $pdo->lastInsertId();
+            $created = true;
+            $unitChanged = true;
+        }
+
+        $rateChanged = false;
+        if ($rateFromUsd !== null) {
+            $activeRate = findActiveExchangeRate($pdo, $countryUnitId);
+            $rateChanged = !$activeRate
+                || abs((float) $activeRate['rate_from_usd'] - $rateFromUsd) >= 0.0000005
+                || (string) $activeRate['currency_symbol'] !== $unitData['currency_symbol']
+                || (string) $activeRate['currency_code'] !== $unitData['currency_code'];
+            if ($rateChanged) {
+                saveExchangeRate($pdo, $countryUnitId, $rateFromUsd, $createdBy);
+            }
+        }
+
+        if ($startedTransaction) {
+            $pdo->commit();
+        }
+    } catch (Throwable $exception) {
+        if ($startedTransaction && $pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $exception;
+    }
+
+    return [
+        'id' => $countryUnitId,
+        'created' => $created,
+        'unit_changed' => $unitChanged,
+        'rate_changed' => $rateChanged,
+    ];
+}
+
+function deactivateCountryUnit(PDO $pdo, int $countryUnitId): void
+{
+    $countryUnit = findCountryUnitById($pdo, $countryUnitId);
+    if (!$countryUnit || (int) ($countryUnit['is_active'] ?? 0) !== 1) {
+        throw new RuntimeException('La unidad país seleccionada no es válida.');
+    }
+
+    $assignmentStmt = $pdo->prepare(
+        'SELECT COUNT(*)
+         FROM user_country_units
+         WHERE country_unit_id = :country_unit_id'
+    );
+    $assignmentStmt->execute([':country_unit_id' => $countryUnitId]);
+    if ((int) $assignmentStmt->fetchColumn() > 0) {
+        throw new RuntimeException(
+            'No se puede eliminar la unidad país porque todavía está asignada a uno o más usuarios.'
+        );
+    }
+
+    $startedTransaction = !$pdo->inTransaction();
+    if ($startedTransaction) {
+        $pdo->beginTransaction();
+    }
+
+    try {
+        $now = nowIso();
+        $deactivateRates = $pdo->prepare(
+            'UPDATE exchange_rates
+             SET is_active = 0,
+                 updated_at = :updated_at
+             WHERE country_unit_id = :country_unit_id
+               AND is_active = 1'
+        );
+        $deactivateRates->execute([
+            ':updated_at' => $now,
+            ':country_unit_id' => $countryUnitId,
+        ]);
+
+        $deactivateUnit = $pdo->prepare(
+            'UPDATE country_units
+             SET is_active = 0,
+                 updated_at = :updated_at
+             WHERE id = :id'
+        );
+        $deactivateUnit->execute([
+            ':updated_at' => $now,
+            ':id' => $countryUnitId,
+        ]);
+
+        if ($startedTransaction) {
+            $pdo->commit();
+        }
+    } catch (Throwable $exception) {
+        if ($startedTransaction && $pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $exception;
+    }
 }
 
 function findCountryUnitByName(PDO $pdo, string $name): ?array
@@ -265,7 +480,7 @@ function saveExchangeRate(PDO $pdo, int $countryUnitId, float $rateFromUsd, int 
 
     $startedTransaction = !$pdo->inTransaction();
     if ($startedTransaction) {
-        $pdo->exec('BEGIN IMMEDIATE');
+        $pdo->beginTransaction();
     }
 
     try {
@@ -315,6 +530,66 @@ function saveExchangeRate(PDO $pdo, int $countryUnitId, float $rateFromUsd, int 
     $stmt = $pdo->prepare('SELECT * FROM exchange_rates WHERE id = :id');
     $stmt->execute([':id' => $rateId]);
     return $stmt->fetch() ?: [];
+}
+
+function saveExchangeRates(PDO $pdo, array $ratesByCountryUnitId, int $createdBy): int
+{
+    if ($createdBy <= 0) {
+        throw new RuntimeException('No se pudo identificar al usuario que registra el tipo de cambio.');
+    }
+
+    $rates = [];
+    foreach ($ratesByCountryUnitId as $countryUnitId => $rateFromUsd) {
+        $countryUnitId = (int) $countryUnitId;
+        if ($countryUnitId <= 0 || $rateFromUsd === null || $rateFromUsd === '') {
+            continue;
+        }
+
+        $rate = is_float($rateFromUsd) || is_int($rateFromUsd)
+            ? (float) $rateFromUsd
+            : parseDecimalInput((string) $rateFromUsd);
+        if (!is_finite($rate) || $rate <= 0) {
+            throw new RuntimeException('Todos los tipos de cambio ingresados deben ser mayores a cero.');
+        }
+
+        $rates[$countryUnitId] = $rate;
+    }
+
+    if ($rates === []) {
+        throw new RuntimeException('Ingresa al menos un tipo de cambio.');
+    }
+
+    $startedTransaction = !$pdo->inTransaction();
+    if ($startedTransaction) {
+        $pdo->beginTransaction();
+    }
+
+    try {
+        $saved = 0;
+        foreach ($rates as $countryUnitId => $rateFromUsd) {
+            $activeRate = findActiveExchangeRate($pdo, $countryUnitId);
+            if (
+                $activeRate
+                && abs((float) $activeRate['rate_from_usd'] - $rateFromUsd) < 0.0000005
+            ) {
+                continue;
+            }
+
+            saveExchangeRate($pdo, $countryUnitId, $rateFromUsd, $createdBy);
+            $saved++;
+        }
+
+        if ($startedTransaction) {
+            $pdo->commit();
+        }
+    } catch (Throwable $exception) {
+        if ($startedTransaction && $pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $exception;
+    }
+
+    return $saved;
 }
 
 function proformaCurrencyModes(): array
