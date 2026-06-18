@@ -10,4 +10,4 @@ if ($backup === null) {
     exit(1);
 }
 
-echo 'Backup creado: ' . $backup . PHP_EOL;
+echo 'Backup creado: ' . basename($backup) . PHP_EOL;

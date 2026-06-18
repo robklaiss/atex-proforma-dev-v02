@@ -798,9 +798,11 @@ function ensureSchemaCompatibility(PDO $pdo): void
 
 function ensureStorageDirectories(): void
 {
-    foreach ([STORAGE_PATH, DATABASE_PATH, BACKUP_PATH, PROFORMA_STORAGE_PATH, SIGNATURE_STORAGE_PATH] as $path) {
+    foreach ([STORAGE_PATH, DATABASE_PATH, BACKUP_PATH, PROFORMA_STORAGE_PATH, SIGNATURE_STORAGE_PATH, LOG_PATH] as $path) {
         if (!is_dir($path)) {
-            mkdir($path, 0775, true);
+            if (!mkdir($path, 0775, true) && !is_dir($path)) {
+                throw new RuntimeException('No se pudo crear la carpeta de almacenamiento ' . basename($path) . '.');
+            }
         }
     }
 }

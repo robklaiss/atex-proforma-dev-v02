@@ -10,11 +10,17 @@ define('DATABASE_PATH', STORAGE_PATH . '/database');
 define('BACKUP_PATH', STORAGE_PATH . '/backups');
 define('PROFORMA_STORAGE_PATH', STORAGE_PATH . '/proformas');
 define('SIGNATURE_STORAGE_PATH', STORAGE_PATH . '/signatures');
+define('LOG_PATH', STORAGE_PATH . '/logs');
 define('SQLITE_PATH', DATABASE_PATH . '/app.sqlite');
 define('TEMPLATE_PDF_PATH', ROOT_PATH . '/Proforma de Factura Atex Paraguay.pdf');
 
 require_once APP_PATH . '/environment.php';
-loadEnvironmentFile(ROOT_PATH . '/.env');
+ini_set('display_errors', '0');
+ini_set('display_startup_errors', '0');
+define('ENV_FILE_LOADED', loadEnvironmentFile(ROOT_PATH . '/.env'));
+$runtime = configureApplicationRuntime(LOG_PATH . '/app.log');
+define('APP_ENV', $runtime['environment']);
+define('APP_DEBUG', $runtime['debug']);
 
 defined('PROFORMA_PREFIX') || define('PROFORMA_PREFIX', getenv('PROFORMA_PREFIX') ?: '002');
 defined('BACKUP_RETENTION_DAYS') || define('BACKUP_RETENTION_DAYS', 30);
@@ -27,12 +33,17 @@ date_default_timezone_set(getenv('APP_TIMEZONE') ?: 'America/Asuncion');
 if (session_status() !== PHP_SESSION_ACTIVE) {
     $sessionBasePath = trim((string) (getenv('APP_BASE_PATH') ?: ''), '/');
     $sessionCookiePath = $sessionBasePath === '' ? '/' : '/' . $sessionBasePath . '/';
+    $forwardedProto = strtolower(trim(explode(',', (string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''))[0]));
+    $configuredUrl = strtolower((string) (getenv('APP_URL') ?: getenv('APP_PUBLIC_URL') ?: ''));
+    $secureCookie = (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off')
+        || $forwardedProto === 'https'
+        || str_starts_with($configuredUrl, 'https://');
     ini_set('session.use_strict_mode', '1');
     ini_set('session.use_only_cookies', '1');
     session_set_cookie_params([
         'lifetime' => 0,
         'path' => $sessionCookiePath,
-        'secure' => (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'),
+        'secure' => $secureCookie,
         'httponly' => true,
         'samesite' => 'Lax',
     ]);

@@ -96,7 +96,7 @@ function appBaseUrl(): string
         return $baseUrl;
     }
 
-    $configured = getenv('APP_PUBLIC_URL') ?: getenv('APP_URL');
+    $configured = getenv('APP_URL') ?: getenv('APP_PUBLIC_URL');
     if (is_string($configured) && trim($configured) !== '') {
         $baseUrl = rtrim(trim($configured), '/');
         return $baseUrl;

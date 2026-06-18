@@ -14,8 +14,11 @@ installLine('Carpetas storage verificadas', true);
 
 $storageHtaccess = STORAGE_PATH . '/.htaccess';
 if (!is_file($storageHtaccess)) {
-    file_put_contents($storageHtaccess, "Require all denied\n");
+    if (file_put_contents($storageHtaccess, "Require all denied\n") === false) {
+        throw new RuntimeException('No se pudo crear la protección de storage.');
+    }
 }
+installLine('Protección de storage verificada', true);
 
 $pdo = db();
 runMigrations($pdo);
@@ -74,10 +77,19 @@ foreach ($initialTaxes as [$name, $rate, $country]) {
 }
 installLine('Impuestos iniciales verificados', true);
 
-foreach ([DATABASE_PATH, BACKUP_PATH, PROFORMA_STORAGE_PATH] as $path) {
-    installLine('Permiso escritura ' . storageRelativePath($path), is_writable($path), $path);
+$unwritablePaths = [];
+foreach ([DATABASE_PATH, BACKUP_PATH, PROFORMA_STORAGE_PATH, SIGNATURE_STORAGE_PATH, LOG_PATH] as $path) {
+    $writable = is_writable($path);
+    installLine('Permiso escritura ' . storageRelativePath($path), $writable);
+    if (!$writable) {
+        $unwritablePaths[] = storageRelativePath($path);
+    }
 }
 
 installLine('Template PDF de referencia', is_file(TEMPLATE_PDF_PATH), basename(TEMPLATE_PDF_PATH));
 
-echo PHP_EOL . 'Instalacion lista. Usuario: proforma-admin' . PHP_EOL;
+if ($unwritablePaths !== []) {
+    throw new RuntimeException('Faltan permisos de escritura en: ' . implode(', ', $unwritablePaths) . '.');
+}
+
+echo PHP_EOL . 'Instalacion lista. Usuario: ' . $adminUsername . PHP_EOL;

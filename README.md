@@ -4,7 +4,7 @@ Sistema simple en PHP 8 + SQLite para cargar clientes y productos, administrar i
 
 ## Requisitos
 
-- PHP 8+
+- PHP 8.2+ recomendado
 - Extension PDO SQLite habilitada
 - Servidor web apuntando a `public/`
 
@@ -31,6 +31,9 @@ El instalador:
 Antes de ejecutar el instalador, copiar `.env.example` a `.env` y definir al menos:
 
 ```txt
+APP_ENV=local
+APP_DEBUG=1
+APP_URL=http://127.0.0.1:8000
 INITIAL_ADMIN_PASSWORD=una-clave-segura
 ```
 
@@ -75,7 +78,9 @@ DEFAULT_CURRENCY_CODE = 'USD';
 
 La aplicación carga variables del entorno del sistema y, para desarrollo o hosting sin gestor de secretos, desde el archivo local `.env`. Las variables ya definidas por el servidor tienen prioridad. El archivo `.env` no debe versionarse.
 
-Tambien se puede definir `DEFAULT_CURRENCY_CODE`, `APP_TIMEZONE` y `APP_PUBLIC_URL` como variables de entorno antes de cargar la aplicacion.
+Tambien se puede definir `DEFAULT_CURRENCY_CODE`, `APP_TIMEZONE` y `APP_URL` como variables de entorno antes de cargar la aplicacion. `APP_PUBLIC_URL` se conserva por compatibilidad.
+
+`APP_ENV` admite `local`, `preproduction` y `production`. En pre-producción y producción se fuerza `APP_DEBUG=0`; los errores se registran en `storage/logs/app.log` sin mostrar detalles al usuario.
 
 ## Proyectos y numeracion
 
@@ -316,6 +321,7 @@ La base validada incluye ejemplos USD, moneda local pendiente/aprobada/rechazada
 - PDFs generados: `storage/proformas/`.
 - Backups: `storage/backups/`.
 - Firmas: `storage/signatures/`.
+- Logs: `storage/logs/app.log`.
 - Renderizados temporales de QA: `tmp/pdfs/`.
 
 Crear un backup manual:
@@ -342,6 +348,8 @@ Estos paths están ignorados por Git. El PDF de la raíz `Proforma de Factura At
 - [ ] Confirmar visualmente un PDF corto y uno multipágina.
 
 El informe de estabilización de Etapa 7 se encuentra en `docs/preproduction-qa-stage7.md`.
+
+La guía completa de servidor, instalación, healthcheck, backups, restauración y checklist post-deploy se encuentra en `docs/deploy-preproduction.md`.
 
 ## Empresas, contactos y validez
 

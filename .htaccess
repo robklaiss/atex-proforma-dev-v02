@@ -3,8 +3,8 @@ DirectoryIndex index.php
 
 RewriteEngine On
 
-RewriteRule ^(?:app|migrations|scripts|storage)(?:/|$) - [F,L]
-RewriteRule ^(?:README\.md|screenlog\.0)$ - [F,L]
+RewriteRule ^(?:app|docs|migrations|scripts|storage|tests)(?:/|$) - [F,L]
+RewriteRule ^(?:README\.md|screenlog\.0|\.env(?:\..*)?|\.git(?:/|$)|\.codex(?:/|$)|\.agents(?:/|$)) - [F,L,NC]
 RewriteRule ^Proforma.*\.pdf$ - [F,L]
 RewriteRule \.(?:sqlite|sql)$ - [F,L]
 
