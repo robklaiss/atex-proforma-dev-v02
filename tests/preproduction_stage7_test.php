@@ -26,7 +26,7 @@ $expected = [
     'manager' => [true, true, true, true, true, true, true],
     'supervisor' => [true, true, true, true, true, true, true],
     'commercial_executive' => [false, false, false, true, false, true, true],
-    'assistant' => [false, false, false, false, false, false, false],
+    'assistant' => [false, false, false, true, false, false, true],
 ];
 
 foreach ($roles as $role) {

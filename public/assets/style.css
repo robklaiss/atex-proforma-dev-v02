@@ -416,6 +416,17 @@ input:disabled {
     overflow-x: auto;
 }
 
+.table-actions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.table-actions form {
+    margin: 0;
+}
+
 table {
     width: 100%;
     border-collapse: collapse;
@@ -510,6 +521,28 @@ tbody tr:hover {
     border-color: #fedf89;
     color: #7c4a03;
     background: #fef3c7;
+}
+
+.sidebar nav > a {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.nav-notification-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    height: 22px;
+    border-radius: 999px;
+    padding: 0 6px;
+    color: #fff;
+    background: var(--danger);
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1;
 }
 
 .field-hint {

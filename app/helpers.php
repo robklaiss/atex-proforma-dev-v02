@@ -170,7 +170,7 @@ function currencyOptions(): array
         'COP' => [
             'label' => 'Pesos colombianos (COP)',
             'symbol' => 'COL$',
-            'decimals' => 2,
+            'decimals' => 0,
             'decimal_separator' => ',',
             'thousands_separator' => '.',
         ],

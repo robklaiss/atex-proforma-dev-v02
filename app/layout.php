@@ -7,7 +7,10 @@ function renderHeader(string $title, bool $showPageHeader = true): void
     $currentUser = isLoggedIn() ? currentUser() : null;
     $isAdmin = isAdmin($currentUser);
     if (isCommercialAssistant($currentUser)) {
-        $nav = [];
+        $nav = [
+            '/proforma-new.php' => 'Nueva Proforma',
+            '/proformas.php' => 'Proformas',
+        ];
     } elseif (isDirector($currentUser)) {
         $nav = [
             '/dashboard.php' => 'Dashboard',
@@ -57,6 +60,9 @@ function renderHeader(string $title, bool $showPageHeader = true): void
     }
     $current = currentPublicPath();
     $configurationActive = array_key_exists($current, $configurationNav);
+    $pendingAuthorizationCount = $currentUser && canDecideProformaAuthorization($currentUser)
+        ? pendingProformaAuthorizationCount(db(), (int) $currentUser['id'])
+        : 0;
     ?>
 <!doctype html>
 <html lang="es">
@@ -84,7 +90,14 @@ function renderHeader(string $title, bool $showPageHeader = true): void
         </div>
         <nav id="main-navigation">
             <?php foreach ($nav as $href => $label): ?>
-                <a href="<?= e(publicPath($href)) ?>" class="<?= $current === $href ? 'active' : '' ?>"><?= e($label) ?></a>
+                <a href="<?= e(publicPath($href)) ?>" class="<?= $current === $href ? 'active' : '' ?>">
+                    <span><?= e($label) ?></span>
+                    <?php if ($href === '/proforma-authorizations.php' && $pendingAuthorizationCount > 0): ?>
+                        <span class="nav-notification-count" aria-label="<?= e(formatInteger($pendingAuthorizationCount) . ' autorizaciones pendientes') ?>">
+                            <?= e(formatInteger($pendingAuthorizationCount)) ?>
+                        </span>
+                    <?php endif; ?>
+                </a>
             <?php endforeach; ?>
             <?php if ($configurationNav): ?>
                 <details class="nav-group nav-settings" <?= $configurationActive ? 'open' : '' ?>>

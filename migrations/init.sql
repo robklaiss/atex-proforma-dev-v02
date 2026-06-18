@@ -182,6 +182,7 @@ CREATE TABLE IF NOT EXISTS proformas (
     commercial_status_notes TEXT NOT NULL DEFAULT '',
     pdf_path TEXT,
     seller_id INTEGER,
+    signer_role TEXT NOT NULL DEFAULT '',
     signer_name TEXT NOT NULL DEFAULT '',
     signer_email TEXT NOT NULL DEFAULT '',
     signer_phone TEXT NOT NULL DEFAULT '',

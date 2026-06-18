@@ -5,6 +5,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../app/bootstrap.php';
 require_once APP_PATH . '/pdf.php';
 require_once APP_PATH . '/layout.php';
+require_once APP_PATH . '/proforma_seller.php';
 
 requireAuth();
 
@@ -191,23 +192,23 @@ $companyCountryUnitDefault = (int) (
     $_POST['company_country_unit_id']
     ?? ($selectedCompany['country_unit_id'] ?? $countryUnitDefault)
 );
-$contactModeDefault = (string) ($_POST['contact_mode'] ?? ($selectedContactId > 0 ? 'existing' : 'none'));
+$contactModeDefault = (string) ($_POST['contact_mode'] ?? ($selectedContactId > 0 ? 'existing' : 'new'));
+if (!in_array($contactModeDefault, ['existing', 'new'], true)) {
+    $contactModeDefault = $selectedContactId > 0 ? 'existing' : 'new';
+}
 $newContactNameDefault = (string) ($_POST['contact_full_name'] ?? '');
 $newContactPhoneDefault = (string) ($_POST['contact_phone'] ?? '');
 $newContactPositionDefault = (string) ($_POST['contact_position'] ?? '');
 $newContactPrimaryEmailDefault = (string) ($_POST['contact_primary_email'] ?? '');
 $newContactSecondaryEmailsDefault = (string) ($_POST['contact_secondary_emails'] ?? '');
-$defaultSellerId = (int) ($currentUser['id'] ?? 0);
-if ($canChooseSeller) {
-    if (isset($_POST['seller_id'])) {
-        $defaultSellerId = (int) $_POST['seller_id'];
-    } elseif ($isEditMode || $isCloneMode) {
-        $defaultSellerId = (int) ($sourceProforma['seller_id'] ?: $sourceProforma['created_by']);
-    } elseif (($currentUser['role'] ?? '') === 'assistant') {
-        $defaultSellerId = 0;
-    }
-}
-$selectedSellerId = $defaultSellerId;
+$selectedSellerId = resolveProformaSellerId(
+    $currentUser ?? [],
+    $sourceProforma,
+    $isEditMode,
+    $isCloneMode,
+    $canChooseSeller,
+    $_POST
+);
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     try {
@@ -219,7 +220,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $companyPhone = trim((string) ($_POST['company_phone'] ?? ''));
         $companyEmail = trim((string) ($_POST['company_email'] ?? ''));
         $companyCountryUnitId = (int) ($_POST['company_country_unit_id'] ?? 0);
-        $contactMode = (string) ($_POST['contact_mode'] ?? 'none');
+        $contactMode = (string) ($_POST['contact_mode'] ?? '');
         $contactId = (int) ($_POST['contact_id'] ?? 0);
         $contactEmailId = (int) ($_POST['contact_email_id'] ?? 0);
         $contactFullName = trim((string) ($_POST['contact_full_name'] ?? ''));
@@ -227,7 +228,14 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $contactPosition = trim((string) ($_POST['contact_position'] ?? ''));
         $contactPrimaryEmail = trim((string) ($_POST['contact_primary_email'] ?? ''));
         $contactSecondaryEmails = trim((string) ($_POST['contact_secondary_emails'] ?? ''));
-        $sellerId = $canChooseSeller ? (int) ($_POST['seller_id'] ?? 0) : (int) ($currentUser['id'] ?? 0);
+        $sellerId = resolveProformaSellerId(
+            $currentUser ?? [],
+            $sourceProforma,
+            $isEditMode,
+            $isCloneMode,
+            $canChooseSeller,
+            $_POST
+        );
         $projectIdHint = max(0, (int) ($_POST['project_id'] ?? 0));
         $projectName = normalizeProjectDisplayName((string) ($_POST['project_name'] ?? ''));
         $emissionDate = trim((string) ($_POST['emission_date'] ?? ''));
@@ -273,6 +281,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             throw new RuntimeException('Selecciona una unidad país asignada a tu usuario.');
         }
         $currencySnapshot = resolveProformaCurrency($pdo, $countryUnitId, $currencyMode);
+        $currencySnapshot['authorization_status'] = proformaAuthorizationStatusForSigner(
+            $currencySnapshot,
+            $signerMap[$sellerId]
+        );
         if (
             $shouldSendEmail
             && $currencySnapshot['currency_mode'] === 'LOCAL'
@@ -305,6 +317,12 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         }
         if (!is_array($rawItems) || count($rawItems) === 0) {
             throw new RuntimeException('Agrega al menos un producto.');
+        }
+        if (!in_array($contactMode, ['existing', 'new'], true)) {
+            throw new RuntimeException('Toda proforma debe tener un contacto destinatario específico.');
+        }
+        if ($contactMode === 'existing' && $contactId <= 0) {
+            throw new RuntimeException('Selecciona el contacto destinatario de la proforma.');
         }
 
         $items = [];
@@ -402,8 +420,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                     $contactSecondaryEmails
                 );
                 $selectedContactEmail = findPrimaryContactEmail($pdo, (int) $selectedContact['id']);
-            } elseif ($contactMode !== 'none') {
-                throw new RuntimeException('Selecciona una opción válida para el contacto.');
+            } else {
+                throw new RuntimeException('Toda proforma debe tener un contacto destinatario específico.');
             }
 
             $recipientEmail = trim((string) ($selectedContactEmail['email'] ?? ''));
@@ -451,7 +469,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                   currency_code, currency_mode, currency_symbol, country_unit_id, exchange_rate_used,
                   exchange_rate_source, exchange_rate_authorized_by, exchange_rate_authorized_at, authorization_status,
                   format_type, subtotal, discount_percent, discount_amount, tax_total, total,
-                  seller_id, signer_name, signer_position, signer_email, signer_phone, signer_unit,
+                  seller_id, signer_role, signer_name, signer_position, signer_email, signer_phone, signer_unit,
                   signer_signature_image, created_by, created_at)
                  VALUES
                  (:proforma_number, :project_id, :parent_proforma_id, :version_number, :project_sequence,
@@ -462,7 +480,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                   :currency_code, :currency_mode, :currency_symbol, :country_unit_id, :exchange_rate_used,
                   :exchange_rate_source, NULL, NULL, :authorization_status,
                   :format_type, :subtotal, :discount_percent, :discount_amount, :tax_total, :total,
-                  :seller_id, :signer_name, :signer_position, :signer_email, :signer_phone, :signer_unit,
+                  :seller_id, :signer_role, :signer_name, :signer_position, :signer_email, :signer_phone, :signer_unit,
                   :signer_signature_image, :created_by, :created_at)'
             );
             $insert->execute([
@@ -502,6 +520,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 ':tax_total' => round($taxTotal, 2),
                 ':total' => round($grandTotal, 2),
                 ':seller_id' => $sellerId,
+                ':signer_role' => (string) $signerMap[$sellerId]['role'],
                 ':signer_name' => $signature['name'],
                 ':signer_position' => $signature['position'],
                 ':signer_email' => $signature['email'],
@@ -576,6 +595,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 'discount_amount' => round($discountAmount, 2),
                 'tax_total' => round($taxTotal, 2),
                 'total' => round($grandTotal, 2),
+                'signer_role' => (string) $signerMap[$sellerId]['role'],
                 'contact_name' => $commercialFields['contact_name'],
                 'contact_email' => $commercialFields['contact_email'],
                 'contact_phone' => $commercialFields['contact_phone'],
@@ -649,6 +669,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && isset($_POST['items']) &
 $pageTitle = $isEditMode ? 'Editar Proforma' : ($isCloneMode ? 'Clonar Proforma' : 'Nueva Proforma');
 $submitLabel = 'Guardar';
 $selectedSigner = $signerMap[$selectedSellerId] ?? null;
+$sellerCanBeChanged = $canChooseSeller && !$isEditMode;
 $formatOptions = proformaFormatOptions();
 
 renderHeader($pageTitle);
@@ -782,8 +803,7 @@ renderHeader($pageTitle);
         <div class="commercial-contact-block">
             <label>
                 Contacto cliente
-                <select name="contact_mode" id="contact-mode">
-                    <option value="none" <?= $contactModeDefault === 'none' ? 'selected' : '' ?>>Sin contacto específico</option>
+                <select name="contact_mode" id="contact-mode" required>
                     <option value="existing" <?= $contactModeDefault === 'existing' ? 'selected' : '' ?>>Seleccionar contacto existente</option>
                     <option value="new" <?= $contactModeDefault === 'new' ? 'selected' : '' ?>>Crear o asociar contacto</option>
                 </select>
@@ -836,7 +856,7 @@ renderHeader($pageTitle);
         <div class="grid-form">
             <label>
                 Vendedor
-                <?php if ($canChooseSeller): ?>
+                <?php if ($sellerCanBeChanged): ?>
                     <select name="seller_id" id="seller-select" required>
                         <option value="">Seleccionar vendedor</option>
                         <?php foreach ($signers as $signer): ?>
@@ -854,13 +874,26 @@ renderHeader($pageTitle);
                         <?php endforeach; ?>
                     </select>
                 <?php else: ?>
-                    <input type="hidden" name="seller_id" id="seller-id" value="<?= (int) ($currentUser['id'] ?? 0) ?>">
-                    <input value="<?= e(userFullName($currentUser ?: [])) ?>" readonly>
+                    <input type="hidden" name="seller_id" id="seller-id" value="<?= $selectedSellerId ?>">
+                    <input value="<?= e($selectedSigner ? userFullName($selectedSigner) : (string) ($sourceProforma['signer_name'] ?? userFullName($currentUser ?: []))) ?>" readonly>
                 <?php endif; ?>
             </label>
             <div class="signature-preview" id="seller-signature">
                 <strong>Firma que se adjuntara</strong>
-                <?php $initialSignature = $selectedSigner ? userSignature($selectedSigner) : userSignature($currentUser ?: []); ?>
+                <?php
+                $initialSignature = $selectedSigner
+                    ? userSignature($selectedSigner)
+                    : ($isEditMode && is_array($sourceProforma)
+                        ? [
+                            'name' => (string) ($sourceProforma['signer_name'] ?? ''),
+                            'position' => (string) ($sourceProforma['signer_position'] ?? ''),
+                            'email' => (string) ($sourceProforma['signer_email'] ?? ''),
+                            'phone' => (string) ($sourceProforma['signer_phone'] ?? ''),
+                            'unit' => (string) ($sourceProforma['signer_unit'] ?? ''),
+                            'signature_image' => (string) ($sourceProforma['signer_signature_image'] ?? ''),
+                        ]
+                        : userSignature($currentUser ?: []));
+                ?>
                 <span><?= e($initialSignature['name'] !== '' ? $initialSignature['name'] : emptyFieldMarker()) ?></span>
                 <span><?= e($initialSignature['position'] !== '' ? $initialSignature['position'] : emptyFieldMarker()) ?></span>
                 <span><?= e($initialSignature['email'] !== '' ? $initialSignature['email'] : emptyFieldMarker()) ?></span>
@@ -1099,7 +1132,8 @@ function currentExchangeRate() {
 function fmt(value) {
     const currencyCode = currentCurrencyCode();
     const currency = currentCurrency();
-    const decimals = Math.max(0, Number.parseInt(currency.decimals || 2, 10));
+    const configuredDecimals = Number.parseInt(currency.decimals, 10);
+    const decimals = Number.isFinite(configuredDecimals) ? Math.max(0, configuredDecimals) : 2;
     const exchangeRate = currentExchangeRate();
     if (currentCurrencyMode() === 'LOCAL' && exchangeRate === null) {
         return `${String(currency.symbol || '')} pendiente`;
@@ -1632,8 +1666,11 @@ function renderContacts(preferredContactId = 0, preferredEmailId = 0) {
 }
 
 function updateContactMode() {
-    existingContactFields.hidden = contactModeSelect.value !== 'existing';
-    newContactFields.hidden = contactModeSelect.value !== 'new';
+    const useExisting = contactModeSelect.value === 'existing';
+    existingContactFields.hidden = !useExisting;
+    newContactFields.hidden = useExisting;
+    contactSelect.required = useExisting;
+    document.getElementById('contact-full-name').required = !useExisting;
 }
 
 function applyFoundCompany(payload) {
@@ -1650,11 +1687,10 @@ function applyFoundCompany(payload) {
     contactsByCompanyConfig[String(company.id)] = Array.isArray(payload.contacts) ? payload.contacts : [];
     setCompanyExistingState(true);
     companySearchStatus.textContent = `Empresa encontrada: ${company.name}.`;
+    const contacts = Array.isArray(payload.contacts) ? payload.contacts : [];
     renderContacts(initialContactId, initialContactEmailId);
-    if (payload.contacts.length > 0 && contactModeSelect.value === 'none') {
-        contactModeSelect.value = 'existing';
-        updateContactMode();
-    }
+    contactModeSelect.value = contacts.length > 0 ? 'existing' : 'new';
+    updateContactMode();
     applyClientTaxToRows(true);
 }
 
@@ -1670,10 +1706,8 @@ function prepareNewCompany() {
     }
     companySearchStatus.textContent = 'RUC no registrado. Completa los datos para crear la empresa al guardar.';
     renderContacts();
-    if (contactModeSelect.value === 'existing') {
-        contactModeSelect.value = 'new';
-        updateContactMode();
-    }
+    contactModeSelect.value = 'new';
+    updateContactMode();
 }
 
 async function searchCompanyByRuc() {

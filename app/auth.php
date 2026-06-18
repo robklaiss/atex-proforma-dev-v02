@@ -145,6 +145,15 @@ function userAllowedPath(?array $user, string $path): bool
     if (isCommercialAssistant($user)) {
         return in_array($path, [
             '/profile.php',
+            '/proforma-new.php',
+            '/proformas.php',
+            '/proforma-preview.php',
+            '/proforma-view.php',
+            '/download-proforma.php',
+            '/proforma-authorizations.php',
+            '/company-search.php',
+            '/project-search.php',
+            '/signature-image.php',
         ], true);
     }
 
@@ -172,13 +181,17 @@ function userAllowedPath(?array $user, string $path): bool
 function canChooseProformaSeller(?array $user = null): bool
 {
     $user ??= currentUser();
-    return isAdmin($user);
+    return isAdmin($user) || isCommercialAssistant($user);
 }
 
 function canCreateProformas(?array $user = null): bool
 {
     $user ??= currentUser();
-    return $user !== null && in_array($user['role'], ['admin', 'manager', 'supervisor', 'commercial_executive', 'user'], true);
+    return $user !== null && in_array(
+        $user['role'],
+        ['admin', 'manager', 'supervisor', 'commercial_executive', 'assistant', 'user'],
+        true
+    );
 }
 
 function canChangeProformaStatus(?array $user = null): bool
@@ -376,6 +389,13 @@ function proformaVisibilityClause(
 
     if ($mode === 'all') {
         return ['1 = 1', []];
+    }
+    if (isCommercialAssistant($user) && $userId > 0) {
+        $params[':' . $paramPrefix . '_created_by'] = $userId;
+        return [
+            $proformaAlias . '.created_by = :' . $paramPrefix . '_created_by',
+            $params,
+        ];
     }
     if ($mode === 'none' || $userId <= 0) {
         return ['1 = 0', []];

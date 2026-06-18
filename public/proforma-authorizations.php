@@ -170,7 +170,9 @@ renderHeader('Autorizaciones');
 <?php if ($requestProforma): ?>
     <section class="panel">
         <h2>Solicitar autorización</h2>
-        <?php if (normalizeProformaCurrencyMode((string) $requestProforma['currency_mode']) !== 'LOCAL'): ?>
+        <?php if (proformaIsManagerSigned($requestProforma)): ?>
+            <p class="flash info">Esta proforma está firmada por un gerente y no requiere autorización, sin importar la moneda.</p>
+        <?php elseif (normalizeProformaCurrencyMode((string) $requestProforma['currency_mode']) !== 'LOCAL'): ?>
             <p class="flash info">Esta proforma está en dólares y no requiere autorización de tipo de cambio.</p>
         <?php elseif (proformaAuthorizationStatus($requestProforma) !== 'PENDING'): ?>
             <p class="flash info">La proforma ya no está pendiente de autorización.</p>

@@ -189,6 +189,18 @@ $reused = createOrReuseContactForCompany(
 );
 assertSameValue((int) $contact['id'], (int) $reused['id'], 'evita duplicar contacto por nombre y email principal');
 
+$pdo->prepare(
+    'DELETE FROM company_contacts
+     WHERE company_id = :company_id AND contact_id = :contact_id'
+)->execute([
+    ':company_id' => (int) $company['id'],
+    ':contact_id' => (int) $contact['id'],
+]);
+$legacyContacts = commercialContactsForCompany($pdo, (int) $company['id']);
+assertSameValue(1, count($legacyContacts), 'recupera contactos asociados por la relación histórica con el cliente');
+$legacySelection = selectContactForCompany($pdo, (int) $company['id'], (int) $contact['id']);
+assertSameValue((int) $contact['id'], (int) $legacySelection['contact']['id'], 'permite seleccionar un contacto histórico de la empresa');
+
 $primaryEmail = findPrimaryContactEmail($pdo, (int) $contact['id']);
 $createdAt = '2026-06-17 12:00:00';
 foreach ([10, 20, 30, 45] as $days) {

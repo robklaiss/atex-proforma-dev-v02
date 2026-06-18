@@ -121,7 +121,8 @@ $insertProforma = static function (
 ): int {
     $signatureStmt = $pdo->prepare('SELECT * FROM users WHERE id = :id');
     $signatureStmt->execute([':id' => $sellerId]);
-    $signature = userSignature($signatureStmt->fetch() ?: []);
+    $signer = $signatureStmt->fetch() ?: [];
+    $signature = userSignature($signer);
     $stmt = $pdo->prepare(
         'INSERT INTO proformas
          (proforma_number, project_id, parent_proforma_id, version_number, project_sequence,
@@ -129,7 +130,7 @@ $insertProforma = static function (
           project_name, emission_date, expiration_date, validity_days, expires_at,
           currency_code, currency_mode, currency_symbol, country_unit_id, exchange_rate_used,
           exchange_rate_source, authorization_status, subtotal, tax_total, total,
-          seller_id, signer_name, signer_position, signer_email, signer_phone, signer_unit,
+          seller_id, signer_role, signer_name, signer_position, signer_email, signer_phone, signer_unit,
           signer_signature_image, created_by, created_at)
          VALUES
          (:number, :project_id, :parent_id, :version_number, :project_sequence,
@@ -137,7 +138,7 @@ $insertProforma = static function (
           \'Edificio Puerto Ibiza\', \'2026-06-17\', \'2026-06-27\', 10, :expires_at,
           :currency_code, :currency_mode, :currency_symbol, :country_unit_id, :exchange_rate_used,
           :exchange_rate_source, :authorization_status, 100, 10, 110,
-          :seller_id, :signer_name, :signer_position, :signer_email, :signer_phone, :signer_unit,
+          :seller_id, :signer_role, :signer_name, :signer_position, :signer_email, :signer_phone, :signer_unit,
           :signer_signature_image, :created_by, \'2026-06-17 12:00:00\')'
     );
     $stmt->execute([
@@ -157,6 +158,7 @@ $insertProforma = static function (
         ':exchange_rate_source' => $currency['exchange_rate_source'],
         ':authorization_status' => $currency['authorization_status'],
         ':seller_id' => $sellerId,
+        ':signer_role' => (string) ($signer['role'] ?? ''),
         ':signer_name' => $signature['name'],
         ':signer_position' => $signature['position'],
         ':signer_email' => $signature['email'],
@@ -188,11 +190,38 @@ assertThrows(
 );
 
 $localSnapshot = resolveProformaCurrency($pdo, $paraguayId, 'LOCAL');
-$localSupervisorId = $insertProforma(
+$managerLocalSnapshot = $localSnapshot;
+$managerLocalSnapshot['authorization_status'] = proformaAuthorizationStatusForSigner(
+    $localSnapshot,
+    ['role' => 'manager']
+);
+$managerSignedId = $insertProforma(
     $pdo,
     'EPI-20260617-002',
     (int) $project['id'],
     2,
+    $clientId,
+    $userIds['manager'],
+    $managerLocalSnapshot
+);
+$managerSigned = $pdo->query('SELECT * FROM proformas WHERE id = ' . $managerSignedId)->fetch();
+assertSameValue('NOT_REQUIRED', $managerSigned['authorization_status'], 'proforma LOCAL firmada por Gerente no requiere autorización');
+assertTrueValue(proformaCanDownloadFinal($managerSigned), 'proforma LOCAL firmada por Gerente permite descarga final');
+assertThrows(
+    static fn (): array => requestProformaAuthorization(
+        $pdo,
+        $managerSignedId,
+        $userIds['manager'],
+        $userIds['supervisor']
+    ),
+    'proforma firmada por Gerente no inicia autorización'
+);
+
+$localSupervisorId = $insertProforma(
+    $pdo,
+    'EPI-20260617-003',
+    (int) $project['id'],
+    3,
     $clientId,
     $userIds['executive'],
     $localSnapshot
@@ -208,6 +237,11 @@ $supervisorRequest = requestProformaAuthorization(
     $userIds['supervisor']
 );
 assertSameValue('supervisor', $supervisorRequest['requested_role'], 'solicita autorización a Supervisor');
+assertSameValue(
+    1,
+    pendingProformaAuthorizationCount($pdo, $userIds['supervisor']),
+    'contador muestra la autorización pendiente del supervisor'
+);
 assertThrows(
     static fn (): array => requestProformaAuthorization(
         $pdo,
@@ -224,6 +258,11 @@ $approvedGlobal = approveProformaAuthorization(
     $userIds['supervisor']
 );
 assertSameValue('APPROVED', $approvedGlobal['status'], 'Supervisor aprueba con cambio general');
+assertSameValue(
+    0,
+    pendingProformaAuthorizationCount($pdo, $userIds['supervisor']),
+    'contador se limpia después de decidir la autorización'
+);
 $storedGlobal = $pdo->query('SELECT * FROM proformas WHERE id = ' . $localSupervisorId)->fetch();
 assertSameValue('APPROVED', $storedGlobal['authorization_status'], 'proforma aprobada queda APPROVED');
 assertSameValue('GLOBAL', $storedGlobal['exchange_rate_source'], 'aprobación general marca GLOBAL');
@@ -232,9 +271,9 @@ assertTrueValue(proformaCanDownloadFinal($storedGlobal), 'proforma LOCAL aprobad
 
 $localManagerId = $insertProforma(
     $pdo,
-    'EPI-20260617-003',
+    'EPI-20260617-004',
     (int) $project['id'],
-    3,
+    4,
     $clientId,
     $userIds['executive'],
     $localSnapshot
@@ -265,9 +304,9 @@ assertSameValue(
 
 $localRejectedId = $insertProforma(
     $pdo,
-    'EPI-20260617-004',
+    'EPI-20260617-005',
     (int) $project['id'],
-    4,
+    5,
     $clientId,
     $userIds['executive'],
     $localSnapshot

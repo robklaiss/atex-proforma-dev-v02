@@ -123,6 +123,10 @@ foreach (countryUnits($pdo) as $unit) {
 }
 
 assertSameValue('US$ 100.00', formatMoney(100, 'USD'), 'formatea USD con símbolo y decimales correctos');
+assertSameValue('₲ 100.000', formatMoney(100000, 'PYG'), 'formatea guaraníes sin decimales');
+assertSameValue('COL$ 100.000', formatMoney(100000, 'COP'), 'formatea pesos colombianos sin decimales');
+assertSameValue('RD$ 100.000,00', formatMoney(100000, 'DOP'), 'mantiene decimales en pesos dominicanos');
+assertSameValue('฿ 100.000,00', formatMoney(100000, 'PAB'), 'mantiene decimales en balboas');
 assertSameValue('₲', $units['Paraguay']['currency_symbol'], 'usa el símbolo exacto de Paraguay');
 assertSameValue('RD$', $units['República Dominicana']['currency_symbol'], 'usa el símbolo exacto de República Dominicana');
 assertSameValue('COL$', $units['Colombia']['currency_symbol'], 'usa el símbolo exacto de Colombia');

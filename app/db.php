@@ -531,6 +531,7 @@ function ensureSchemaCompatibility(PDO $pdo): void
             'commercial_status_updated_at' => 'TEXT',
             'commercial_status_notes' => "TEXT NOT NULL DEFAULT ''",
             'seller_id' => 'INTEGER',
+            'signer_role' => "TEXT NOT NULL DEFAULT ''",
             'signer_name' => "TEXT NOT NULL DEFAULT ''",
             'signer_email' => "TEXT NOT NULL DEFAULT ''",
             'signer_phone' => "TEXT NOT NULL DEFAULT ''",
@@ -620,6 +621,19 @@ function ensureSchemaCompatibility(PDO $pdo): void
                AND date(expiration_date) IS NOT NULL"
         );
         $pdo->exec('UPDATE proformas SET seller_id = created_by WHERE seller_id IS NULL');
+        $pdo->exec(
+            "UPDATE proformas
+             SET signer_role = COALESCE((SELECT role FROM users WHERE users.id = proformas.seller_id), '')
+             WHERE TRIM(COALESCE(signer_role, '')) = ''"
+        );
+        $pdo->exec(
+            "UPDATE proformas
+             SET authorization_status = 'NOT_REQUIRED',
+                 exchange_rate_authorized_by = NULL,
+                 exchange_rate_authorized_at = NULL
+             WHERE authorization_status IN ('PENDING', 'REJECTED')
+               AND LOWER(TRIM(COALESCE(signer_role, ''))) = 'manager'"
+        );
         $pdo->exec(
             "UPDATE proformas
              SET signer_name = COALESCE(
@@ -713,6 +727,21 @@ function ensureSchemaCompatibility(PDO $pdo): void
             FOREIGN KEY (requested_by) REFERENCES users(id),
             FOREIGN KEY (requested_to) REFERENCES users(id)
         )"
+    );
+    $pdo->exec(
+        "UPDATE proforma_authorizations
+         SET status = 'APPROVED',
+             approved_exchange_rate = COALESCE(approved_exchange_rate, current_exchange_rate),
+             exchange_rate_source = COALESCE(exchange_rate_source, 'GLOBAL'),
+             notes = 'No requiere autorización: proforma firmada por gerente.',
+             updated_at = CURRENT_TIMESTAMP,
+             decided_at = CURRENT_TIMESTAMP
+         WHERE status = 'PENDING'
+           AND proforma_id IN (
+               SELECT id
+               FROM proformas
+               WHERE LOWER(TRIM(COALESCE(signer_role, ''))) = 'manager'
+           )"
     );
     $pdo->exec(
         "CREATE TABLE IF NOT EXISTS notifications (

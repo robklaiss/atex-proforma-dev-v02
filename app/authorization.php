@@ -14,8 +14,26 @@ function authorizationStatusOptions(): array
 
 function proformaAuthorizationStatus(array $proforma): string
 {
+    if (proformaIsManagerSigned($proforma)) {
+        return 'NOT_REQUIRED';
+    }
+
     $status = strtoupper(trim((string) ($proforma['authorization_status'] ?? 'NOT_REQUIRED')));
     return array_key_exists($status, authorizationStatusOptions()) ? $status : 'NOT_REQUIRED';
+}
+
+function proformaIsManagerSigned(array $proforma): bool
+{
+    return strtolower(trim((string) ($proforma['signer_role'] ?? ''))) === 'manager';
+}
+
+function proformaAuthorizationStatusForSigner(array $currencySnapshot, array $signer): string
+{
+    if (strtolower(trim((string) ($signer['role'] ?? ''))) === 'manager') {
+        return 'NOT_REQUIRED';
+    }
+
+    return proformaAuthorizationStatus($currencySnapshot);
 }
 
 function proformaAuthorizationLabel(array $proforma): string
@@ -37,7 +55,7 @@ function proformaCanDownloadFinal(array $proforma): bool
     $currencyMode = normalizeProformaCurrencyMode((string) ($proforma['currency_mode'] ?? 'USD'));
     $status = proformaAuthorizationStatus($proforma);
 
-    if ($currencyMode === 'USD') {
+    if ($currencyMode === 'USD' || proformaIsManagerSigned($proforma)) {
         return $status === 'NOT_REQUIRED' || $status === 'APPROVED';
     }
 
@@ -68,6 +86,23 @@ function canDecideProformaAuthorization(?array $user): bool
         ['admin', 'manager', 'supervisor'],
         true
     );
+}
+
+function pendingProformaAuthorizationCount(PDO $pdo, int $userId): int
+{
+    if ($userId <= 0 || !tableExists($pdo, 'proforma_authorizations')) {
+        return 0;
+    }
+
+    $stmt = $pdo->prepare(
+        "SELECT COUNT(*)
+         FROM proforma_authorizations
+         WHERE requested_to = :user_id
+           AND status = 'PENDING'"
+    );
+    $stmt->execute([':user_id' => $userId]);
+
+    return (int) $stmt->fetchColumn();
 }
 
 function availableProformaAuthorizers(PDO $pdo, array $proforma, int $excludeUserId = 0): array
@@ -209,11 +244,20 @@ function requestProformaAuthorization(
         throw new RuntimeException('Selecciona un superior válido.');
     }
 
-    $proformaStmt = $pdo->prepare('SELECT * FROM proformas WHERE id = :id LIMIT 1');
+    $proformaStmt = $pdo->prepare(
+        'SELECT p.*, COALESCE(NULLIF(p.signer_role, \'\'), seller.role, \'\') AS signer_role
+         FROM proformas p
+         LEFT JOIN users seller ON seller.id = p.seller_id
+         WHERE p.id = :id
+         LIMIT 1'
+    );
     $proformaStmt->execute([':id' => $proformaId]);
     $proforma = $proformaStmt->fetch();
     if (!$proforma) {
         throw new RuntimeException('La proforma seleccionada no existe.');
+    }
+    if (proformaIsManagerSigned($proforma)) {
+        throw new RuntimeException('Esta proforma está firmada por un gerente y no requiere autorización.');
     }
     if (normalizeProformaCurrencyMode((string) $proforma['currency_mode']) !== 'LOCAL') {
         throw new RuntimeException('Esta proforma está en dólares y no requiere autorización de tipo de cambio.');

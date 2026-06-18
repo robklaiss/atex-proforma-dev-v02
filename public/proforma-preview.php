@@ -131,6 +131,8 @@ $publicLink = proformaPublicLink($publicToken);
 
 <?php if (!$canDownloadFinal): ?>
     <div class="flash <?= $authorizationStatus === 'REJECTED' ? 'error' : 'warning' ?>"><?= e(proformaDownloadBlockMessage($proforma)) ?></div>
+<?php elseif (proformaIsManagerSigned($proforma)): ?>
+    <div class="flash info">Esta proforma está firmada por un gerente y no requiere autorización, sin importar la moneda.</div>
 <?php elseif (!$isLocalCurrency): ?>
     <div class="flash info">Esta proforma está en dólares y no requiere autorización de tipo de cambio.</div>
 <?php endif; ?>

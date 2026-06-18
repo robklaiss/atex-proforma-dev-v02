@@ -419,8 +419,18 @@ function selectContactForCompany(PDO $pdo, int $companyId, int $contactId, int $
     }
 
     $stmt = $pdo->prepare(
-        'SELECT 1 FROM company_contacts
-         WHERE company_id = :company_id AND contact_id = :contact_id
+        'SELECT 1
+         FROM client_contacts cc
+         WHERE cc.id = :contact_id
+           AND (
+               cc.client_id = :company_id
+               OR EXISTS (
+                   SELECT 1
+                   FROM company_contacts link
+                   WHERE link.company_id = :company_id
+                     AND link.contact_id = cc.id
+               )
+           )
          LIMIT 1'
     );
     $stmt->execute([
@@ -459,11 +469,22 @@ function selectContactForCompany(PDO $pdo, int $companyId, int $contactId, int $
 function commercialContactsForCompany(PDO $pdo, int $companyId): array
 {
     $stmt = $pdo->prepare(
-        'SELECT cc.*, link.is_primary AS company_primary
-         FROM company_contacts link
-         JOIN client_contacts cc ON cc.id = link.contact_id
-         WHERE link.company_id = :company_id
-         ORDER BY link.is_primary DESC, cc.full_name COLLATE NOCASE'
+        'SELECT cc.*,
+                COALESCE((
+                    SELECT MAX(link.is_primary)
+                    FROM company_contacts link
+                    WHERE link.company_id = :company_id
+                      AND link.contact_id = cc.id
+                ), 0) AS company_primary
+         FROM client_contacts cc
+         WHERE cc.client_id = :company_id
+            OR EXISTS (
+                SELECT 1
+                FROM company_contacts link
+                WHERE link.company_id = :company_id
+                  AND link.contact_id = cc.id
+            )
+         ORDER BY company_primary DESC, cc.full_name COLLATE NOCASE'
     );
     $stmt->execute([':company_id' => $companyId]);
     $contacts = $stmt->fetchAll();

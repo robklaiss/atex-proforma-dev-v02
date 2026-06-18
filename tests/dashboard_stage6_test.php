@@ -32,6 +32,28 @@ foreach (['commercial_executive', 'assistant'] as $role) {
 }
 stage6AssertSame(false, userAllowedPath(['role' => 'commercial_executive'], '/indicators.php'), 'Ejecutivo comercial queda bloqueado también por URL directa');
 stage6AssertSame(false, userAllowedPath(['role' => 'assistant'], '/indicators.php'), 'Asistente comercial queda bloqueado también por URL directa');
+stage6AssertTrue(userAllowedPath(['role' => 'assistant'], '/proforma-new.php'), 'Asistente comercial puede acceder a crear proformas');
+stage6AssertTrue(userAllowedPath(['role' => 'assistant'], '/proformas.php'), 'Asistente comercial puede acceder al listado de proformas');
+stage6AssertTrue(userAllowedPath(['role' => 'assistant'], '/proforma-preview.php'), 'Asistente comercial puede previsualizar sus proformas');
+stage6AssertTrue(canCreateProformas(['role' => 'assistant']), 'Asistente comercial puede emitir proformas');
+stage6AssertTrue(canChooseProformaSeller(['role' => 'assistant']), 'Asistente comercial selecciona al vendedor firmante');
+[$assistantVisibilitySql, $assistantVisibilityParams] = proformaVisibilityClause(
+    ['id' => 31, 'role' => 'assistant'],
+    'p',
+    'seller',
+    'c',
+    'assistant_visible'
+);
+stage6AssertSame(
+    'p.created_by = :assistant_visible_created_by',
+    $assistantVisibilitySql,
+    'Asistente comercial limita el listado a las proformas emitidas por su usuario'
+);
+stage6AssertSame(
+    [':assistant_visible_created_by' => 31],
+    $assistantVisibilityParams,
+    'Asistente comercial aplica su usuario como emisor visible'
+);
 foreach (['admin', 'director', 'manager', 'supervisor', 'commercial_executive'] as $role) {
     stage6AssertTrue(canUpdateCommercialStatus(['role' => $role]), userRoleLabel($role) . ' puede actualizar estado comercial');
 }

@@ -65,6 +65,82 @@ function wouldCreateReportingCycle(int $userId, int $reportsToId): bool
     return (bool) $stmt->fetchColumn();
 }
 
+function deleteSystemUser(int $userId, int $replacementUserId): void
+{
+    $pdo = db();
+    $user = fetchUserById($userId);
+    if (!$user) {
+        throw new RuntimeException('El usuario seleccionado no existe.');
+    }
+    if ($userId === $replacementUserId) {
+        throw new RuntimeException('No podes eliminar tu propio usuario.');
+    }
+    if ((string) $user['role'] === 'admin' && adminUserCount($userId) < 1) {
+        throw new RuntimeException('El sistema debe conservar al menos un administrador.');
+    }
+
+    createDatabaseBackup();
+    $pdo->beginTransaction();
+    try {
+        $updates = [
+            ['UPDATE users SET reports_to_id = NULL WHERE reports_to_id = :user_id', [':user_id' => $userId]],
+            ['UPDATE clients SET created_by = NULL WHERE created_by = :user_id', [':user_id' => $userId]],
+            ['UPDATE exchange_rates SET created_by = :replacement_id WHERE created_by = :user_id', [
+                ':replacement_id' => $replacementUserId,
+                ':user_id' => $userId,
+            ]],
+            ['UPDATE proformas
+              SET created_by = CASE WHEN created_by = :user_id THEN :replacement_id ELSE created_by END,
+                  seller_id = CASE WHEN seller_id = :user_id THEN NULL ELSE seller_id END,
+                  won_by = CASE WHEN won_by = :user_id THEN NULL ELSE won_by END,
+                  commercial_status_updated_by = CASE WHEN commercial_status_updated_by = :user_id THEN NULL ELSE commercial_status_updated_by END,
+                  exchange_rate_authorized_by = CASE WHEN exchange_rate_authorized_by = :user_id THEN NULL ELSE exchange_rate_authorized_by END
+              WHERE created_by = :user_id
+                 OR seller_id = :user_id
+                 OR won_by = :user_id
+                 OR commercial_status_updated_by = :user_id
+                 OR exchange_rate_authorized_by = :user_id', [
+                ':replacement_id' => $replacementUserId,
+                ':user_id' => $userId,
+            ]],
+            ['UPDATE proforma_authorizations
+              SET requested_by = CASE WHEN requested_by = :user_id THEN :replacement_id ELSE requested_by END,
+                  requested_to = CASE WHEN requested_to = :user_id THEN :replacement_id ELSE requested_to END
+              WHERE requested_by = :user_id OR requested_to = :user_id', [
+                ':replacement_id' => $replacementUserId,
+                ':user_id' => $userId,
+            ]],
+            ['DELETE FROM notifications WHERE user_id = :user_id', [':user_id' => $userId]],
+            ['UPDATE proforma_events SET user_id = NULL WHERE user_id = :user_id', [':user_id' => $userId]],
+            ['UPDATE proforma_disclaimers
+              SET created_by = CASE WHEN created_by = :user_id THEN NULL ELSE created_by END,
+                  updated_by = CASE WHEN updated_by = :user_id THEN NULL ELSE updated_by END
+              WHERE created_by = :user_id OR updated_by = :user_id', [':user_id' => $userId]],
+            ['DELETE FROM user_country_units WHERE user_id = :user_id', [':user_id' => $userId]],
+        ];
+
+        foreach ($updates as [$sql, $params]) {
+            if (preg_match('/(?:UPDATE|FROM)\s+([a-z_]+)/i', $sql, $match) === 1 && !tableExists($pdo, $match[1])) {
+                continue;
+            }
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+        }
+
+        $delete = $pdo->prepare('DELETE FROM users WHERE id = :id');
+        $delete->execute([':id' => $userId]);
+        if ($delete->rowCount() !== 1) {
+            throw new RuntimeException('No se pudo eliminar el usuario.');
+        }
+        $pdo->commit();
+    } catch (Throwable $exception) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $exception;
+    }
+}
+
 $currentAdmin = currentUser();
 $allowedRoles = array_keys(roleOptions());
 $countryUnits = countryUnits(db());
@@ -75,6 +151,17 @@ $edit = null;
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     try {
         verifyCsrf();
+
+        $action = (string) ($_POST['action'] ?? 'save');
+        if ($action === 'delete') {
+            $deleteId = max(0, (int) ($_POST['id'] ?? 0));
+            deleteSystemUser($deleteId, (int) ($currentAdmin['id'] ?? 0));
+            setFlash('success', 'Usuario eliminado. Sus referencias históricas fueron preservadas o reasignadas.');
+            redirect('/users.php');
+        }
+        if ($action !== 'save') {
+            throw new RuntimeException('Acción no válida.');
+        }
 
         $id = (int) ($_POST['id'] ?? 0);
         $username = trim((string) ($_POST['username'] ?? ''));
@@ -466,7 +553,19 @@ renderHeader('Usuarios');
                     <td><?= e($user['reports_to_name'] !== '' ? $user['reports_to_name'] : 'Sin superior') ?></td>
                     <td><?= e(formatInteger((int) $user['proforma_count'])) ?></td>
                     <td><?= e($user['created_at']) ?></td>
-                    <td class="right"><a href="<?= e(publicPath('/users.php?edit=' . (int) $user['id'])) ?>">Editar</a></td>
+                    <td class="right">
+                        <div class="table-actions">
+                            <a href="<?= e(publicPath('/users.php?edit=' . (int) $user['id'])) ?>">Editar</a>
+                            <?php if (!$currentAdmin || (int) $user['id'] !== (int) $currentAdmin['id']): ?>
+                                <form method="post" onsubmit="return confirm('¿Eliminar este usuario? Esta acción no se puede deshacer.');">
+                                    <?= csrfField() ?>
+                                    <input type="hidden" name="action" value="delete">
+                                    <input type="hidden" name="id" value="<?= (int) $user['id'] ?>">
+                                    <button class="button danger small" type="submit">Eliminar</button>
+                                </form>
+                            <?php endif; ?>
+                        </div>
+                    </td>
                 </tr>
             <?php endforeach; ?>
             </tbody>

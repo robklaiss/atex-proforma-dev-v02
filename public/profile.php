@@ -139,9 +139,72 @@ $selectedAdditionalCountryUnitIds = array_values(array_filter(
     static fn (int $countryUnitId): bool => $countryUnitId !== $selectedPrimaryCountryUnitId
 ));
 
+$profileProformaOwnerSql = isCommercialAssistant($currentUser)
+    ? 'p.created_by = :user_id'
+    : 'COALESCE(p.seller_id, p.created_by) = :user_id';
+$profileProformasStmt = db()->prepare(
+    'SELECT p.id, p.proforma_number, p.project_name, p.emission_date, p.created_at,
+            p.total, p.currency_code, p.currency_mode, p.currency_symbol, p.exchange_rate_used,
+            COALESCE(NULLIF(p.company_name_snapshot, \'\'), c.empresa) AS company_name
+     FROM proformas p
+     JOIN clients c ON c.id = p.client_id
+     WHERE ' . $profileProformaOwnerSql . '
+     ORDER BY p.id DESC
+     LIMIT 20'
+);
+$profileProformasStmt->execute([':user_id' => (int) ($currentUser['id'] ?? 0)]);
+$profileProformas = $profileProformasStmt->fetchAll();
+
 renderHeader('Perfil');
 ?>
 <?php if ($error): ?><div class="flash error"><?= e($error) ?></div><?php endif; ?>
+
+<section class="toolbar">
+    <?php if (canCreateProformas($currentUser)): ?>
+        <a class="button primary" href="<?= e(publicPath('/proforma-new.php')) ?>">Nueva Proforma</a>
+    <?php endif; ?>
+    <?php if (userAllowedPath($currentUser, '/proformas.php')): ?>
+        <a class="button" href="<?= e(publicPath('/proformas.php')) ?>">Ver todas mis proformas</a>
+    <?php endif; ?>
+</section>
+
+<section class="panel">
+    <h2>Mis proformas</h2>
+    <?php if (!$profileProformas): ?>
+        <p class="muted">Este usuario todavía no ha emitido proformas.</p>
+    <?php else: ?>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                <tr>
+                    <th>Número</th>
+                    <th>Empresa</th>
+                    <th>Proyecto</th>
+                    <th>Emisión</th>
+                    <th class="right">Total</th>
+                    <th></th>
+                </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($profileProformas as $proforma): ?>
+                    <tr>
+                        <td><?= e($proforma['proforma_number']) ?></td>
+                        <td><?= e($proforma['company_name']) ?></td>
+                        <td><?= e($proforma['project_name']) ?></td>
+                        <td><?= e($proforma['emission_date']) ?></td>
+                        <td class="right"><?= e(formatProformaMoney((float) $proforma['total'], $proforma)) ?></td>
+                        <td class="right">
+                            <?php if (userAllowedPath($currentUser, '/proforma-preview.php')): ?>
+                                <a href="<?= e(publicPath('/proforma-preview.php?id=' . (int) $proforma['id'])) ?>">Ver</a>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    <?php endif; ?>
+</section>
 
 <section class="panel">
     <h2>Datos de firma</h2>

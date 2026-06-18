@@ -472,7 +472,7 @@ function drawProformaHeader(SimplePdf $pdf, array $proforma, array $client, stri
     $pdf->text($headerX, 68, 'Emisión: ' . formatDateLong((string) $proforma['emission_date']), 10, 'regular', '#000000', $headerW, 'right');
     $pdf->text($headerX, 85, 'Vencimiento del presupuesto: ' . formatDateLong((string) $proforma['expiration_date']), 10, 'regular', '#000000', $headerW, 'right');
     $authorizationStatus = proformaAuthorizationStatus($proforma);
-    if ($authorizationStatus === 'PENDING') {
+    if ($authorizationStatus === 'PENDING' && !proformaIsManagerSigned($proforma)) {
         $pdf->text($headerX, 98, 'PENDIENTE DE AUTORIZACIÓN DE TIPO DE CAMBIO', 8, 'bold', $orange, $headerW, 'right');
     } elseif ($authorizationStatus === 'REJECTED') {
         $pdf->text($headerX, 98, 'RECHAZADA - NO VÁLIDA PARA ENTREGA FINAL', 8, 'bold', '#b42318', $headerW, 'right');
