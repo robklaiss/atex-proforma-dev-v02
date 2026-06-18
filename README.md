@@ -206,6 +206,36 @@ php tests/commercial_stage3_test.php
 php tests/authorization_stage4_test.php
 ```
 
+## Dashboard gerencial e indicadores comerciales
+
+El apartado `Indicadores` está disponible para Administrador, Director, Gerente y Supervisor. Ejecutivo comercial y Asistente comercial quedan bloqueados tanto en navegación como por acceso directo.
+
+El dashboard incluye:
+
+- Indicadores Latam por unidad país y detalle por ejecutivo.
+- Filtros por rango de fecha, unidad país, ejecutivo, estado comercial y moneda.
+- Gráficos de emitidos, ganados/cerrados, evolución por país y efectividad por ejecutivo.
+- Tablas de resumen con montos comparables en USD.
+
+Las proformas almacenan un estado comercial independiente de la autorización de tipo de cambio:
+
+```txt
+OPEN
+WON
+LOST
+CANCELLED
+```
+
+`authorization_status` no se modifica al actualizar el resultado comercial. Los importes del dashboard usan `proformas.total`, que es el monto base histórico en USD; las proformas locales conservan `exchange_rate_used` como snapshot y no se recalculan con el cambio vigente.
+
+La migración incremental crea un backup `backup_YYYY-MM-DD_HH-mm-ss_pre-dashboard-stage6.sqlite` antes de agregar los campos comerciales.
+
+Prueba automatizada:
+
+```bash
+php tests/dashboard_stage6_test.php
+```
+
 ## Empresas, contactos y validez
 
 `clients` se conserva como tabla de empresas para no romper datos históricos. El RUC se normaliza en `ruc_normalized` y se busca desde la carga de proforma mediante un endpoint autenticado.

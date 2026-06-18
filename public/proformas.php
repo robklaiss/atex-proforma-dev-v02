@@ -13,7 +13,7 @@ $sellerFilter = max(0, (int) ($_GET['seller_id'] ?? 0));
 $unitFilter = trim((string) ($_GET['unit'] ?? ''));
 $dateFrom = trim((string) ($_GET['date_from'] ?? ''));
 $dateTo = trim((string) ($_GET['date_to'] ?? ''));
-$statusFilter = (string) ($_GET['status'] ?? 'all');
+$statusFilter = strtoupper((string) ($_GET['status'] ?? ''));
 
 if ($unitFilter !== '' && !isAllowedCountry($unitFilter)) {
     $unitFilter = '';
@@ -24,8 +24,8 @@ if ($dateFrom !== '' && !isValidDate($dateFrom)) {
 if ($dateTo !== '' && !isValidDate($dateTo)) {
     $dateTo = '';
 }
-if (!in_array($statusFilter, ['all', 'won', 'open'], true)) {
-    $statusFilter = 'all';
+if ($statusFilter !== '' && !array_key_exists($statusFilter, commercialStatusOptions())) {
+    $statusFilter = '';
 }
 
 $sellerRoleParams = [];
@@ -97,18 +97,9 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             if (!$proforma) {
                 throw new RuntimeException('La proforma seleccionada no existe.');
             }
-            if ((string) ($proforma['status'] ?? '') !== 'venta_ganada') {
+            if (proformaCommercialStatus($proforma) !== 'WON') {
                 createDatabaseBackup();
-                $update = db()->prepare(
-                    "UPDATE proformas
-                     SET status = 'venta_ganada', won_at = :won_at, won_by = :won_by
-                     WHERE id = :id"
-                );
-                $update->execute([
-                    ':won_at' => nowIso(),
-                    ':won_by' => (int) ($currentUser['id'] ?? 0),
-                    ':id' => $id,
-                ]);
+                updateProformaCommercialStatus(db(), $id, 'WON', (int) $currentUser['id']);
             }
             setFlash('success', 'Proforma marcada como venta ganada.');
             redirect('/proformas.php');
@@ -116,12 +107,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 
         if ($action === 'reopen' && $isAdminUser) {
             createDatabaseBackup();
-            $update = db()->prepare(
-                "UPDATE proformas
-                 SET status = 'emitida', won_at = NULL, won_by = NULL
-                 WHERE id = :id"
-            );
-            $update->execute([':id' => $id]);
+            updateProformaCommercialStatus(db(), $id, 'OPEN', (int) $currentUser['id']);
             setFlash('success', 'Proforma reabierta.');
             redirect('/proformas.php');
         }
@@ -152,10 +138,9 @@ if ($dateTo !== '') {
     $proformaWhere[] = 'p.emission_date <= :date_to';
     $proformaParams[':date_to'] = $dateTo;
 }
-if ($statusFilter === 'won') {
-    $proformaWhere[] = "COALESCE(p.status, 'emitida') = 'venta_ganada'";
-} elseif ($statusFilter === 'open') {
-    $proformaWhere[] = "COALESCE(p.status, 'emitida') <> 'venta_ganada'";
+if ($statusFilter !== '') {
+    $proformaWhere[] = "COALESCE(NULLIF(p.commercial_status, ''), CASE WHEN p.status = 'venta_ganada' THEN 'WON' ELSE 'OPEN' END) = :commercial_status";
+    $proformaParams[':commercial_status'] = $statusFilter;
 }
 $whereSql = implode(' AND ', $proformaWhere);
 
@@ -239,9 +224,10 @@ renderHeader('Proformas');
         <label>
             Seguimiento
             <select name="status">
-                <option value="all" <?= $statusFilter === 'all' ? 'selected' : '' ?>>Todos</option>
-                <option value="won" <?= $statusFilter === 'won' ? 'selected' : '' ?>>Venta ganada</option>
-                <option value="open" <?= $statusFilter === 'open' ? 'selected' : '' ?>>Abiertas</option>
+                <option value="" <?= $statusFilter === '' ? 'selected' : '' ?>>Todos</option>
+                <?php foreach (commercialStatusOptions() as $value => $label): ?>
+                    <option value="<?= e($value) ?>" <?= $statusFilter === $value ? 'selected' : '' ?>><?= e($label) ?></option>
+                <?php endforeach; ?>
             </select>
         </label>
         <div class="form-actions">
@@ -287,7 +273,7 @@ renderHeader('Proformas');
                         </th>
                     </tr>
                     <?php foreach ($group['proformas'] as $proforma): ?>
-                        <?php $isWon = (string) ($proforma['status'] ?? 'emitida') === 'venta_ganada'; ?>
+                        <?php $isWon = proformaCommercialStatus($proforma) === 'WON'; ?>
                         <tr>
                             <td><?= e($proforma['proforma_number']) ?></td>
                             <td><?= e($proforma['empresa']) ?></td>
@@ -298,9 +284,7 @@ renderHeader('Proformas');
                                 <span class="badge <?= e(proformaAuthorizationBadgeClass($proforma)) ?>"><?= e(proformaAuthorizationLabel($proforma)) ?></span>
                             </td>
                             <td>
-                                <?php if ($isWon): ?>
-                                    <span class="tracking-line">Resultado: Venta ganada</span>
-                                <?php endif; ?>
+                                <span class="badge <?= e(commercialStatusBadgeClass($proforma)) ?>"><?= e(commercialStatusLabel($proforma)) ?></span>
                                 <span class="tracking-line">Email: <?= e(formatDateTimeShort($proforma['email_sent_at'] ?? null)) ?></span>
                                 <span class="tracking-line">Ingreso: <?= e(formatDateTimeShort($proforma['customer_viewed_at'] ?? null)) ?></span>
                                 <span class="tracking-line">Descarga: <?= e(formatDateTimeShort($proforma['customer_downloaded_at'] ?? null)) ?></span>
@@ -346,21 +330,6 @@ renderHeader('Proformas');
                                             <input type="hidden" name="action" value="send_customer_email">
                                             <input type="hidden" name="id" value="<?= (int) $proforma['id'] ?>">
                                             <button class="button small" type="submit"><?= trim((string) ($proforma['email_sent_at'] ?? '')) !== '' ? 'Reenviar' : 'Enviar' ?></button>
-                                        </form>
-                                    <?php endif; ?>
-                                    <?php if (!$isWon && proformaCanDownloadFinal($proforma) && canChangeProformaStatus($currentUser)): ?>
-                                        <form method="post" onsubmit="return confirm('Marcar esta proforma como venta ganada?');">
-                                            <?= csrfField() ?>
-                                            <input type="hidden" name="action" value="mark_won">
-                                            <input type="hidden" name="id" value="<?= (int) $proforma['id'] ?>">
-                                            <button class="button primary small" type="submit">Venta ganada</button>
-                                        </form>
-                                    <?php elseif ($isAdminUser): ?>
-                                        <form method="post" onsubmit="return confirm('Reabrir esta proforma?');">
-                                            <?= csrfField() ?>
-                                            <input type="hidden" name="action" value="reopen">
-                                            <input type="hidden" name="id" value="<?= (int) $proforma['id'] ?>">
-                                            <button class="button small" type="submit">Reabrir</button>
                                         </form>
                                     <?php endif; ?>
                                 </div>

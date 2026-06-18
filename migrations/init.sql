@@ -175,6 +175,10 @@ CREATE TABLE IF NOT EXISTS proformas (
     status TEXT NOT NULL DEFAULT 'emitida',
     won_at TEXT,
     won_by INTEGER,
+    commercial_status TEXT NOT NULL DEFAULT 'OPEN',
+    commercial_status_updated_by INTEGER,
+    commercial_status_updated_at TEXT,
+    commercial_status_notes TEXT NOT NULL DEFAULT '',
     pdf_path TEXT,
     seller_id INTEGER,
     signer_name TEXT NOT NULL DEFAULT '',
@@ -201,6 +205,7 @@ CREATE TABLE IF NOT EXISTS proformas (
     FOREIGN KEY (contact_email_id) REFERENCES contact_emails(id),
     FOREIGN KEY (seller_id) REFERENCES users(id),
     FOREIGN KEY (won_by) REFERENCES users(id),
+    FOREIGN KEY (commercial_status_updated_by) REFERENCES users(id),
     FOREIGN KEY (country_unit_id) REFERENCES country_units(id),
     FOREIGN KEY (exchange_rate_authorized_by) REFERENCES users(id),
     FOREIGN KEY (created_by) REFERENCES users(id)
@@ -318,6 +323,8 @@ CREATE INDEX IF NOT EXISTS idx_proformas_parent_id ON proformas(parent_proforma_
 CREATE UNIQUE INDEX IF NOT EXISTS idx_proformas_project_sequence ON proformas(project_id, project_sequence);
 CREATE INDEX IF NOT EXISTS idx_proformas_seller_id ON proformas(seller_id);
 CREATE INDEX IF NOT EXISTS idx_proformas_status ON proformas(status);
+CREATE INDEX IF NOT EXISTS idx_proformas_commercial_status ON proformas(commercial_status);
+CREATE INDEX IF NOT EXISTS idx_proformas_emission_date ON proformas(emission_date);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_proformas_public_token ON proformas(public_token) WHERE public_token IS NOT NULL AND public_token <> '';
 CREATE INDEX IF NOT EXISTS idx_proforma_items_proforma_id ON proforma_items(proforma_id);
 CREATE INDEX IF NOT EXISTS idx_proforma_email_logs_sent_at ON proforma_email_logs(sent_at);

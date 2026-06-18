@@ -21,6 +21,7 @@ function db(): PDO
     createCommercialMigrationBackupIfNeeded($GLOBALS['app_pdo']);
     createAuthorizationMigrationBackupIfNeeded($GLOBALS['app_pdo']);
     createNotesMigrationBackupIfNeeded($GLOBALS['app_pdo']);
+    createDashboardMigrationBackupIfNeeded($GLOBALS['app_pdo']);
     ensureSchemaCompatibility($GLOBALS['app_pdo']);
 
     return $GLOBALS['app_pdo'];
@@ -183,6 +184,30 @@ function createNotesMigrationBackupIfNeeded(PDO $pdo): ?string
     }
     if (!copy(SQLITE_PATH, $target)) {
         throw new RuntimeException('No se pudo crear el backup previo a la migración de notas.');
+    }
+    return $target;
+}
+
+function createDashboardMigrationBackupIfNeeded(PDO $pdo): ?string
+{
+    if (
+        !tableExists($pdo, 'proformas')
+        || columnExists($pdo, 'proformas', 'commercial_status')
+        || !is_file(SQLITE_PATH)
+    ) {
+        return null;
+    }
+
+    ensureStorageDirectories();
+    $base = BACKUP_PATH . '/backup_' . date('Y-m-d_H-i-s') . '_pre-dashboard-stage6.sqlite';
+    $target = $base;
+    $counter = 1;
+    while (is_file($target)) {
+        $target = substr($base, 0, -7) . '_' . $counter . '.sqlite';
+        $counter++;
+    }
+    if (!copy(SQLITE_PATH, $target)) {
+        throw new RuntimeException('No se pudo crear el backup previo al dashboard gerencial.');
     }
     return $target;
 }
@@ -491,6 +516,10 @@ function ensureSchemaCompatibility(PDO $pdo): void
             'status' => "TEXT NOT NULL DEFAULT 'emitida'",
             'won_at' => 'TEXT',
             'won_by' => 'INTEGER',
+            'commercial_status' => "TEXT NOT NULL DEFAULT 'OPEN'",
+            'commercial_status_updated_by' => 'INTEGER',
+            'commercial_status_updated_at' => 'TEXT',
+            'commercial_status_notes' => "TEXT NOT NULL DEFAULT ''",
             'seller_id' => 'INTEGER',
             'signer_name' => "TEXT NOT NULL DEFAULT ''",
             'signer_email' => "TEXT NOT NULL DEFAULT ''",
@@ -521,6 +550,20 @@ function ensureSchemaCompatibility(PDO $pdo): void
         }
 
         $pdo->exec("UPDATE proformas SET status = 'emitida' WHERE TRIM(COALESCE(status, '')) = ''");
+        $pdo->exec(
+            "UPDATE proformas
+             SET commercial_status = CASE WHEN status = 'venta_ganada' THEN 'WON' ELSE 'OPEN' END
+             WHERE TRIM(COALESCE(commercial_status, '')) = ''
+                OR commercial_status NOT IN ('OPEN', 'WON', 'LOST', 'CANCELLED')"
+        );
+        $pdo->exec(
+            "UPDATE proformas
+             SET commercial_status = 'WON',
+                 commercial_status_updated_at = COALESCE(commercial_status_updated_at, won_at),
+                 commercial_status_updated_by = COALESCE(commercial_status_updated_by, won_by)
+             WHERE status = 'venta_ganada'
+               AND commercial_status = 'OPEN'"
+        );
         if ($isCurrencyStage2Migration) {
             $pdo->exec(
                 "UPDATE proformas
@@ -616,6 +659,8 @@ function ensureSchemaCompatibility(PDO $pdo): void
         );
         $pdo->exec('CREATE INDEX IF NOT EXISTS idx_proformas_seller_id ON proformas(seller_id)');
         $pdo->exec('CREATE INDEX IF NOT EXISTS idx_proformas_status ON proformas(status)');
+        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_proformas_commercial_status ON proformas(commercial_status)');
+        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_proformas_emission_date ON proformas(emission_date)');
         $pdo->exec('CREATE INDEX IF NOT EXISTS idx_proformas_country_unit_id ON proformas(country_unit_id)');
         $pdo->exec('CREATE INDEX IF NOT EXISTS idx_proformas_company_id ON proformas(company_id)');
         $pdo->exec('CREATE INDEX IF NOT EXISTS idx_proformas_contact_id ON proformas(contact_id)');

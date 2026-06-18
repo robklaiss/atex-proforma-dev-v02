@@ -129,6 +129,10 @@ function userAllowedPath(?array $user, string $path): bool
         return true;
     }
 
+    if ($path === '/indicators.php' && !canViewManagementDashboard($user)) {
+        return false;
+    }
+
     if (isCommercialAssistant($user)) {
         return in_array($path, [
             '/profile.php',
@@ -141,6 +145,7 @@ function userAllowedPath(?array $user, string $path): bool
             '/indicators.php',
             '/proformas.php',
             '/proforma-preview.php',
+            '/proforma-status.php',
             '/proforma-view.php',
             '/download-proforma.php',
             '/proforma-authorizations.php',
@@ -169,7 +174,46 @@ function canCreateProformas(?array $user = null): bool
 
 function canChangeProformaStatus(?array $user = null): bool
 {
-    return canCreateProformas($user);
+    return canUpdateCommercialStatus($user);
+}
+
+function canViewManagementDashboard(?array $user = null): bool
+{
+    $user ??= currentUser();
+    return $user !== null && in_array(
+        (string) ($user['role'] ?? ''),
+        ['admin', 'director', 'manager', 'supervisor'],
+        true
+    );
+}
+
+function can_view_management_dashboard(?array $user = null): bool
+{
+    return canViewManagementDashboard($user);
+}
+
+function canUpdateCommercialStatus(?array $user = null): bool
+{
+    $user ??= currentUser();
+    return $user !== null && in_array(
+        (string) ($user['role'] ?? ''),
+        ['admin', 'director', 'manager', 'supervisor', 'commercial_executive', 'user'],
+        true
+    );
+}
+
+function can_update_commercial_status(?array $user = null): bool
+{
+    return canUpdateCommercialStatus($user);
+}
+
+function requireManagementDashboard(): void
+{
+    requireAuth();
+    if (!canViewManagementDashboard()) {
+        http_response_code(403);
+        exit('Acceso denegado.');
+    }
 }
 
 function canManageExchangeRates(?array $user = null): bool

@@ -18,7 +18,6 @@ function renderHeader(string $title, bool $showPageHeader = true): void
     } else {
         $nav = [
             '/dashboard.php' => 'Dashboard',
-            '/indicators.php' => 'Indicadores',
             '/clients.php' => 'Clientes',
             '/products.php' => 'Productos',
             '/taxes.php' => 'Impuestos',
@@ -26,6 +25,11 @@ function renderHeader(string $title, bool $showPageHeader = true): void
             '/proformas.php' => 'Proformas',
             '/proforma-authorizations.php' => 'Autorizaciones',
         ];
+        if (canViewManagementDashboard($currentUser)) {
+            $nav = array_slice($nav, 0, 1, true)
+                + ['/indicators.php' => 'Indicadores']
+                + array_slice($nav, 1, null, true);
+        }
     }
     $configurationNav = [
         '/profile.php' => 'Perfil',

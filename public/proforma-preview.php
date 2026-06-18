@@ -38,27 +38,6 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             redirect('/proforma-preview.php?id=' . $id);
         }
 
-        if ($action === 'mark_won') {
-            if (!canChangeProformaStatus($currentUser)) {
-                throw new RuntimeException('No tenes permisos para modificar proformas.');
-            }
-            if ((string) ($existing['status'] ?? '') !== 'venta_ganada') {
-                createDatabaseBackup();
-                $update = db()->prepare(
-                    "UPDATE proformas
-                     SET status = 'venta_ganada', won_at = :won_at, won_by = :won_by
-                     WHERE id = :id"
-                );
-                $update->execute([
-                    ':won_at' => nowIso(),
-                    ':won_by' => (int) ($_SESSION['user_id'] ?? 0),
-                    ':id' => $id,
-                ]);
-            }
-            setFlash('success', 'Proforma marcada como venta ganada.');
-            redirect('/proforma-preview.php?id=' . $id);
-        }
-
         throw new RuntimeException('Accion no valida.');
     } catch (Throwable $exception) {
         setFlash('error', $exception->getMessage());
@@ -174,16 +153,7 @@ $publicLink = proformaPublicLink($publicToken);
             <button class="button primary" type="submit"><?= trim((string) ($proforma['email_sent_at'] ?? '')) !== '' ? 'Reenviar al cliente' : 'Enviar al cliente' ?></button>
         </form>
     <?php endif; ?>
-    <?php $isWon = ($proforma['status'] ?? 'emitida') === 'venta_ganada'; ?>
-    <?php if (!$isWon && $canDownloadFinal && canChangeProformaStatus($currentUser)): ?>
-        <form method="post" onsubmit="return confirm('Marcar esta proforma como venta ganada?');">
-            <?= csrfField() ?>
-            <input type="hidden" name="action" value="mark_won">
-            <button class="button primary" type="submit">Venta ganada</button>
-        </form>
-    <?php elseif ($isWon): ?>
-        <span class="badge success">Venta ganada</span>
-    <?php endif; ?>
+    <span class="badge <?= e(commercialStatusBadgeClass($proforma)) ?>"><?= e(commercialStatusLabel($proforma)) ?></span>
     <?php if (canCreateProformas($currentUser)): ?>
         <a class="button" href="<?= e(publicPath('/proforma-new.php')) ?>">Nueva Proforma</a>
     <?php endif; ?>
@@ -206,6 +176,10 @@ $publicLink = proformaPublicLink($publicToken);
         <div>
             <span class="muted">Estado</span>
             <strong><span class="badge <?= e(proformaAuthorizationBadgeClass($proforma)) ?>"><?= e(proformaAuthorizationLabel($proforma)) ?></span></strong>
+        </div>
+        <div>
+            <span class="muted">Estado comercial</span>
+            <strong><span class="badge <?= e(commercialStatusBadgeClass($proforma)) ?>"><?= e(commercialStatusLabel($proforma)) ?></span></strong>
         </div>
         <div>
             <span class="muted">Moneda</span>
@@ -246,6 +220,35 @@ $publicLink = proformaPublicLink($publicToken);
         <p class="flash error"><?= e((string) $proforma['customer_update_request_error']) ?></p>
     <?php endif; ?>
 </section>
+
+<?php if (canUpdateCommercialStatus($currentUser)): ?>
+<section class="panel">
+    <h2>Resultado comercial</h2>
+    <form method="post" action="<?= e(publicPath('/proforma-status.php')) ?>" class="grid-form commercial-status-form">
+        <?= csrfField() ?>
+        <input type="hidden" name="id" value="<?= $id ?>">
+        <input type="hidden" name="return_to" value="/proforma-preview.php?id=<?= $id ?>">
+        <label>
+            Estado comercial
+            <select name="commercial_status">
+                <?php foreach (commercialStatusOptions() as $value => $label): ?>
+                    <option value="<?= e($value) ?>" <?= proformaCommercialStatus($proforma) === $value ? 'selected' : '' ?>><?= e($label) ?></option>
+                <?php endforeach; ?>
+            </select>
+        </label>
+        <label>
+            Nota de seguimiento
+            <textarea name="commercial_status_notes" maxlength="2000" rows="3"><?= e((string) ($proforma['commercial_status_notes'] ?? '')) ?></textarea>
+        </label>
+        <div class="form-actions">
+            <button class="button primary" type="submit">Actualizar estado comercial</button>
+        </div>
+    </form>
+    <?php if (trim((string) ($proforma['commercial_status_updated_at'] ?? '')) !== ''): ?>
+        <p class="muted">Última actualización: <?= e(formatDateTimeShort($proforma['commercial_status_updated_at'])) ?>.</p>
+    <?php endif; ?>
+</section>
+<?php endif; ?>
 
 <section class="panel">
     <h2>Observaciones y notas aplicadas</h2>
