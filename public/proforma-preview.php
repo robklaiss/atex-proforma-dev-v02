@@ -144,6 +144,7 @@ $events = $eventsStmt->fetchAll();
 $canDownloadFinal = proformaCanDownloadFinal($proforma);
 $authorizationStatus = proformaAuthorizationStatus($proforma);
 $isLocalCurrency = normalizeProformaCurrencyMode((string) $proforma['currency_mode']) === 'LOCAL';
+$disclaimerSnapshots = loadProformaDisclaimerSnapshots(db(), $id);
 
 renderHeader('Previsualizar Proforma');
 $pdfUrl = publicPath('/proforma-view.php?id=' . $id);
@@ -243,6 +244,23 @@ $publicLink = proformaPublicLink($publicToken);
     <?php endif; ?>
     <?php if (trim((string) ($proforma['customer_update_request_error'] ?? '')) !== ''): ?>
         <p class="flash error"><?= e((string) $proforma['customer_update_request_error']) ?></p>
+    <?php endif; ?>
+</section>
+
+<section class="panel">
+    <h2>Observaciones y notas aplicadas</h2>
+    <?php if (proformaObservations($proforma) !== ''): ?>
+        <div class="proforma-notes"><?= e(proformaObservations($proforma)) ?></div>
+    <?php else: ?>
+        <p class="muted">Sin observaciones.</p>
+    <?php endif; ?>
+    <?php if ($disclaimerSnapshots !== []): ?>
+        <h3>Disclaimers</h3>
+        <ul>
+            <?php foreach ($disclaimerSnapshots as $disclaimer): ?>
+                <li><strong><?= e($disclaimer['title_snapshot']) ?>:</strong> <?= e($disclaimer['body_snapshot']) ?></li>
+            <?php endforeach; ?>
+        </ul>
     <?php endif; ?>
 </section>
 

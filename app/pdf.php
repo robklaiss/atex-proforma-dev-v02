@@ -103,6 +103,16 @@ final class SimplePdf
         return $y + (count($lines) * $lineHeight);
     }
 
+    public function wrapLines(string $text, float $width, float $size = 9): array
+    {
+        return $this->wrapText($text, $width, $size, PHP_INT_MAX);
+    }
+
+    public function pageCount(): int
+    {
+        return count($this->pages);
+    }
+
     public function imagePng(string $path, float $x, float $y, float $w, float $h): bool
     {
         if (!is_file($path) || !function_exists('imagecreatefrompng')) {
@@ -392,10 +402,17 @@ function generateProformaPdf(array $proforma, array $client, array $items, array
     foreach ($pages as $pageIndex => $pageItems) {
         $pdf->addPage(595.5, 842.25);
         drawProformaHeader($pdf, $proforma, $client, $orange);
-        drawProformaItemsTable($pdf, $pageItems, $itemsPerPage, $orange, $lightGray, $text, $formatType, $proforma);
+        $visualRowCount = $pageIndex === $pageCount - 1
+            ? max(4, count($pageItems))
+            : $itemsPerPage;
+        drawProformaItemsTable($pdf, $pageItems, $visualRowCount, $orange, $lightGray, $text, $formatType, $proforma);
 
         if ($pageIndex === $pageCount - 1) {
-            drawProformaBottom($pdf, $proforma, $taxSummary, $orange, $lightGray);
+            $tableBottom = 188.0 + 30.0 + ($visualRowCount * 30.0);
+            $needsContinuation = drawProformaBottom($pdf, $proforma, $taxSummary, $orange, $lightGray, $tableBottom);
+            if ($needsContinuation) {
+                drawProformaNotesContinuationPages($pdf, $proforma, $orange);
+            }
         }
     }
 
@@ -418,6 +435,7 @@ function regenerateStoredProformaPdf(PDO $pdo, int $proformaId): string
         'direccion' => (string) ($proforma['client_direccion'] ?? ''),
         'telefono' => (string) ($proforma['client_telefono'] ?? ''),
     ];
+    $proforma['disclaimers'] = loadProformaDisclaimerSnapshots($pdo, $proformaId);
 
     $filename = safeBasename((string) ($proforma['pdf_path'] ?? ''));
     if ($filename === '') {
@@ -575,14 +593,8 @@ function drawEmptyItemRowSeal(SimplePdf $pdf, float $tableX, float $rowY, float 
     }
 }
 
-function drawProformaBottom(SimplePdf $pdf, array $proforma, array $taxSummary, string $orange, string $lightGray): void
+function drawProformaBottom(SimplePdf $pdf, array $proforma, array $taxSummary, string $orange, string $lightGray, float $tableBottom): bool
 {
-    $bottomY = 662.0;
-    $pdf->text(25, $bottomY, 'Condiciones Comerciales', 12, 'bold', '#000000');
-    $conditions = trim((string) ($proforma['commercial_conditions'] ?? ''));
-    $conditions = $conditions === '' ? emptyFieldMarker() : $conditions;
-    $pdf->multiline(25, $bottomY + 18, 250, $conditions, 8, 'regular', '#333333', 11, 5);
-
     $taxLabel = 'Impuestos';
     if (count($taxSummary) === 1) {
         $taxLabel = $taxSummary[0]['label'];
@@ -590,33 +602,121 @@ function drawProformaBottom(SimplePdf $pdf, array $proforma, array $taxSummary, 
         $taxLabel = 'varios';
     }
 
-    $totalsX = 290.0;
-    $totalsW = 280.0;
-    $discountPercent = normalizeDiscountPercent((float) ($proforma['discount_percent'] ?? 0));
+    $contentY = $tableBottom + 14.0;
+    drawProformaTotalsAt($pdf, $proforma, $taxLabel, $orange, $lightGray, $contentY);
+    $records = buildProformaNoteRecords($pdf, $proforma, 250.0);
+    $recordsHeight = proformaNoteRecordsHeight($records);
+    $notesLimit = 680.0;
+    $fits = $records === [] || ($contentY + $recordsHeight <= $notesLimit);
+    if ($fits && $records !== []) {
+        drawProformaNoteRecords($pdf, $records, 25.0, $contentY);
+    }
+    if ($fits) {
+        drawProformaSignature($pdf, $proforma, max(690.0, $contentY + $recordsHeight + 8.0));
+    }
+    drawAtexFooter($pdf, $orange);
+    return !$fits;
+}
+
+function drawProformaTotalsAt(SimplePdf $pdf, array $proforma, string $taxLabel, string $orange, string $lightGray, float $y): void
+{
+    $x = 290.0;
+    $w = 280.0;
+    $rowH = 24.0;
     $discountAmount = round((float) ($proforma['discount_amount'] ?? 0), 2);
-    if ($discountAmount <= 0 && drawAtexTotalsPanel($pdf)) {
-        $pdf->text($totalsX, 656, formatProformaMoney((float) $proforma['subtotal'], $proforma), 9, 'bold', '#333333', $totalsW - 14, 'right');
-        $pdf->text($totalsX + 142, 688, $taxLabel, 9, 'bold', '#333333');
-        $pdf->text($totalsX, 688, formatProformaMoney((float) $proforma['tax_total'], $proforma), 9, 'bold', '#333333', $totalsW - 14, 'right');
-        $pdf->text($totalsX, 716.5, formatProformaMoney((float) $proforma['total'], $proforma), 15, 'bold', '#ffffff', $totalsW - 17, 'right');
-    } elseif ($discountAmount > 0) {
-        drawProformaDiscountTotalsPanel($pdf, $proforma, $taxLabel, $discountPercent, $discountAmount, $orange, $lightGray);
-    } else {
-        $pdf->text($totalsX + 8, $bottomY - 6, 'Subtotal', 9, 'bold', '#333333');
-        $pdf->text($totalsX, $bottomY - 6, formatProformaMoney((float) $proforma['subtotal'], $proforma), 9, 'bold', '#333333', $totalsW - 10, 'right');
+    $rows = [
+        ['Subtotal', formatProformaMoney((float) $proforma['subtotal'], $proforma)],
+    ];
+    if ($discountAmount > 0) {
+        $rows[] = [
+            'Descuento (' . formatNumber((float) $proforma['discount_percent']) . '%)',
+            '-' . formatProformaMoney($discountAmount, $proforma),
+        ];
+    }
+    $rows[] = [$taxLabel, formatProformaMoney((float) $proforma['tax_total'], $proforma)];
+    foreach ($rows as $index => [$label, $value]) {
+        $rowY = $y + ($index * $rowH);
+        $pdf->rect($x, $rowY, $w, $rowH, $index % 2 === 0 ? $lightGray : '#ffffff');
+        $pdf->text($x + 8, $rowY + 8, $label, 8, 'bold', '#333333');
+        $pdf->text($x, $rowY + 8, $value, 8, 'bold', '#333333', $w - 10, 'right');
+    }
+    $totalY = $y + (count($rows) * $rowH);
+    $pdf->rect($x, $totalY, $w, 36, $orange);
+    $pdf->text($x + 8, $totalY + 12, 'TOTAL', 10, 'bold', '#ffffff');
+    $pdf->text($x, $totalY + 10, formatProformaMoney((float) $proforma['total'], $proforma), 15, 'bold', '#ffffff', $w - 10, 'right');
+}
 
-        $pdf->rect($totalsX, $bottomY + 22, $totalsW, 34, $lightGray);
-        $pdf->text($totalsX + 8, $bottomY + 34, 'Impuestos', 9, 'bold', '#333333');
-        $pdf->text($totalsX + 142, $bottomY + 34, $taxLabel, 9, 'bold', '#333333');
-        $pdf->text($totalsX, $bottomY + 34, formatProformaMoney((float) $proforma['tax_total'], $proforma), 9, 'bold', '#333333', $totalsW - 10, 'right');
-
-        $pdf->rect($totalsX, $bottomY + 56, $totalsW, 44, $orange);
-        $pdf->text($totalsX + 8, $bottomY + 72, 'TOTAL', 10, 'bold', '#ffffff');
-        $pdf->text($totalsX, $bottomY + 70, formatProformaMoney((float) $proforma['total'], $proforma), 15, 'bold', '#ffffff', $totalsW - 10, 'right');
+function buildProformaNoteRecords(SimplePdf $pdf, array $proforma, float $width): array
+{
+    $records = [];
+    $observations = proformaObservations($proforma);
+    if ($observations !== '') {
+        $records[] = ['Observaciones', 11.0, 'bold', '#000000', 15.0];
+        foreach ($pdf->wrapLines($observations, $width, 8.5) as $line) {
+            $records[] = [$line, 8.5, 'regular', '#333333', 11.0];
+        }
+        $records[] = ['', 8.0, 'regular', '#333333', 7.0];
     }
 
-    drawProformaSignature($pdf, $proforma);
-    drawAtexFooter($pdf, $orange);
+    $disclaimers = is_array($proforma['disclaimers'] ?? null) ? $proforma['disclaimers'] : [];
+    if ($disclaimers !== []) {
+        $records[] = ['Notas y disclaimers', 10.0, 'bold', '#000000', 14.0];
+        foreach ($disclaimers as $disclaimer) {
+            $title = trim((string) ($disclaimer['title_snapshot'] ?? $disclaimer['title'] ?? ''));
+            $body = trim((string) ($disclaimer['body_snapshot'] ?? $disclaimer['body'] ?? ''));
+            $line = '- ' . ($title !== '' ? $title . ': ' : '') . $body;
+            foreach ($pdf->wrapLines($line, $width, 7.5) as $wrapped) {
+                $records[] = [$wrapped, 7.5, 'regular', '#444444', 10.0];
+            }
+        }
+    }
+    return $records;
+}
+
+function proformaNoteRecordsHeight(array $records): float
+{
+    return array_reduce($records, static fn(float $height, array $record): float => $height + (float) $record[4], 0.0);
+}
+
+function drawProformaNoteRecords(SimplePdf $pdf, array $records, float $x, float $y): float
+{
+    foreach ($records as [$text, $size, $font, $color, $lineHeight]) {
+        if ($text !== '') {
+            $pdf->text($x, $y, $text, $size, $font, $color);
+        }
+        $y += $lineHeight;
+    }
+    return $y;
+}
+
+function drawProformaNotesContinuationPages(SimplePdf $pdf, array $proforma, string $orange): void
+{
+    $records = buildProformaNoteRecords($pdf, $proforma, 545.0);
+    while ($records !== []) {
+        $pdf->addPage(595.5, 842.25);
+        drawAtexLogo($pdf, 40, 28, $orange);
+        $pdf->text(280, 34, 'Proforma N° ' . (string) $proforma['proforma_number'], 12, 'bold', '#000000', 290, 'right');
+        $pdf->text(280, 56, 'Proyecto: ' . displayOrMarker($proforma['project_name'] ?? ''), 9, 'regular', '#333333', 290, 'right');
+        $pdf->line(25, 105, 570, 105, '#999999', 0.8);
+
+        $available = 545.0;
+        $remainingHeight = proformaNoteRecordsHeight($records);
+        if ($remainingHeight <= 445.0) {
+            $available = 445.0;
+        }
+        $pageRecords = [];
+        $used = 0.0;
+        while ($records !== [] && $used + (float) $records[0][4] <= $available) {
+            $record = array_shift($records);
+            $pageRecords[] = $record;
+            $used += (float) $record[4];
+        }
+        $endY = drawProformaNoteRecords($pdf, $pageRecords, 25.0, 125.0);
+        if ($records === []) {
+            drawProformaSignature($pdf, $proforma, max(590.0, $endY + 18.0));
+        }
+        drawAtexFooter($pdf, $orange);
+    }
 }
 
 function drawProformaDiscountTotalsPanel(SimplePdf $pdf, array $proforma, string $taxLabel, float $discountPercent, float $discountAmount, string $orange, string $lightGray): void
@@ -649,7 +749,7 @@ function drawProformaDiscountTotalsPanel(SimplePdf $pdf, array $proforma, string
     $pdf->text($totalsX, $totalY + 10, formatProformaMoney((float) $proforma['total'], $proforma), 15, 'bold', '#ffffff', $valueW, 'right');
 }
 
-function drawProformaSignature(SimplePdf $pdf, array $proforma): void
+function drawProformaSignature(SimplePdf $pdf, array $proforma, float $topY = 690.0): void
 {
     $signature = [
         trim((string) ($proforma['signer_name'] ?? '')),
@@ -665,12 +765,12 @@ function drawProformaSignature(SimplePdf $pdf, array $proforma): void
     $x = 25.0;
     $imagePath = storedSignatureAbsolutePath((string) ($proforma['signer_signature_image'] ?? ''));
     if ($imagePath !== null) {
-        $pdf->imagePng($imagePath, $x, 692, 112, 40);
+        $pdf->imagePng($imagePath, $x, $topY, 112, 40);
     }
-    $y = 741.0;
+    $y = $topY + 49.0;
     $pdf->line($x, $y - 5, $x + 210, $y - 5, '#999999', 0.6);
     foreach ($signature as $index => $line) {
-        $pdf->text($x, $y + ($index * 10), displayOrMarker($line), $index === 0 ? 9 : 7.5, $index === 0 ? 'bold' : 'regular', '#222222');
+        $pdf->text($x, $y + ($index * 8), displayOrMarker($line), $index === 0 ? 8.5 : 7, $index === 0 ? 'bold' : 'regular', '#222222');
     }
 }
 

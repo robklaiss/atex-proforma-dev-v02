@@ -78,6 +78,7 @@ $downloadUrl = publicPath('/propuesta-download.php?token=' . rawurlencode($token
 $customerName = proformaCustomerName($proforma);
 $projectName = proformaProjectName($proforma);
 $details = proformaTrackingDetails($proforma);
+$disclaimerSnapshots = loadProformaDisclaimerSnapshots(db(), (int) $proforma['id']);
 ?>
 <!doctype html>
 <html lang="es">
@@ -138,6 +139,23 @@ $details = proformaTrackingDetails($proforma);
                     </div>
                 <?php endif; ?>
             </dl>
+
+            <?php if (proformaObservations($proforma) !== '' || $disclaimerSnapshots !== []): ?>
+                <section class="customer-proposal-notes">
+                    <?php if (proformaObservations($proforma) !== ''): ?>
+                        <h2>Observaciones</h2>
+                        <p class="proforma-notes"><?= e(proformaObservations($proforma)) ?></p>
+                    <?php endif; ?>
+                    <?php if ($disclaimerSnapshots !== []): ?>
+                        <h2>Notas y disclaimers</h2>
+                        <ul>
+                            <?php foreach ($disclaimerSnapshots as $disclaimer): ?>
+                                <li><strong><?= e($disclaimer['title_snapshot']) ?>:</strong> <?= e($disclaimer['body_snapshot']) ?></li>
+                            <?php endforeach; ?>
+                        </ul>
+                    <?php endif; ?>
+                </section>
+            <?php endif; ?>
 
             <div class="customer-actions">
                 <?php if ($isExpired): ?>

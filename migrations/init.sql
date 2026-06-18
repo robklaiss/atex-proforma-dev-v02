@@ -280,6 +280,33 @@ CREATE TABLE IF NOT EXISTS proforma_events (
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
+CREATE TABLE IF NOT EXISTS proforma_disclaimers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    is_default INTEGER NOT NULL DEFAULT 1,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_by INTEGER,
+    updated_by INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (created_by) REFERENCES users(id),
+    FOREIGN KEY (updated_by) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS proforma_disclaimer_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    proforma_id INTEGER NOT NULL,
+    disclaimer_id INTEGER,
+    title_snapshot TEXT NOT NULL,
+    body_snapshot TEXT NOT NULL,
+    sort_order_snapshot INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (proforma_id) REFERENCES proformas(id) ON DELETE CASCADE,
+    FOREIGN KEY (disclaimer_id) REFERENCES proforma_disclaimers(id) ON DELETE SET NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_proformas_client_id ON proformas(client_id);
 CREATE INDEX IF NOT EXISTS idx_proformas_company_id ON proformas(company_id);
 CREATE INDEX IF NOT EXISTS idx_proformas_contact_id ON proformas(contact_id);
@@ -302,6 +329,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_proforma_authorizations_pending
     WHERE status = 'PENDING';
 CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id, is_read, created_at);
 CREATE INDEX IF NOT EXISTS idx_proforma_events_proforma_id ON proforma_events(proforma_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_proforma_disclaimers_order ON proforma_disclaimers(is_active, is_default, sort_order);
+CREATE INDEX IF NOT EXISTS idx_proforma_disclaimer_snapshots_proforma ON proforma_disclaimer_snapshots(proforma_id, sort_order_snapshot);
 CREATE INDEX IF NOT EXISTS idx_client_contacts_client_id ON client_contacts(client_id);
 CREATE INDEX IF NOT EXISTS idx_client_contacts_normalized_name ON client_contacts(normalized_name);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_ruc_normalized

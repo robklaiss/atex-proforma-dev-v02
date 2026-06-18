@@ -147,6 +147,7 @@ function userAllowedPath(?array $user, string $path): bool
             '/signature-image.php',
             '/delivery-log.php',
             '/exchange-rates.php',
+            '/disclaimers.php',
             '/profile.php',
         ], true);
     }
@@ -185,6 +186,25 @@ function requireExchangeRateManager(): void
 {
     requireAuth();
     if (!canManageExchangeRates()) {
+        http_response_code(403);
+        exit('Acceso denegado.');
+    }
+}
+
+function canManageDisclaimers(?array $user = null): bool
+{
+    $user ??= currentUser();
+    return $user !== null && in_array(
+        (string) ($user['role'] ?? ''),
+        ['admin', 'director', 'manager', 'supervisor'],
+        true
+    );
+}
+
+function requireDisclaimerManager(): void
+{
+    requireAuth();
+    if (!canManageDisclaimers()) {
         http_response_code(403);
         exit('Acceso denegado.');
     }

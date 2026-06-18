@@ -29,6 +29,7 @@ if (session_status() !== PHP_SESSION_ACTIVE) {
 }
 
 require_once APP_PATH . '/helpers.php';
+require_once APP_PATH . '/disclaimers.php';
 require_once APP_PATH . '/projects.php';
 require_once APP_PATH . '/currency.php';
 require_once APP_PATH . '/commercial.php';

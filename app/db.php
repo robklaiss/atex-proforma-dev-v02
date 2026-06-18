@@ -20,6 +20,7 @@ function db(): PDO
     createCurrencyMigrationBackupIfNeeded($GLOBALS['app_pdo']);
     createCommercialMigrationBackupIfNeeded($GLOBALS['app_pdo']);
     createAuthorizationMigrationBackupIfNeeded($GLOBALS['app_pdo']);
+    createNotesMigrationBackupIfNeeded($GLOBALS['app_pdo']);
     ensureSchemaCompatibility($GLOBALS['app_pdo']);
 
     return $GLOBALS['app_pdo'];
@@ -159,6 +160,30 @@ function createAuthorizationMigrationBackupIfNeeded(PDO $pdo): ?string
         throw new RuntimeException('No se pudo crear el backup previo a la migración de autorizaciones.');
     }
 
+    return $target;
+}
+
+function createNotesMigrationBackupIfNeeded(PDO $pdo): ?string
+{
+    if (
+        !tableExists($pdo, 'proformas')
+        || tableExists($pdo, 'proforma_disclaimers')
+        || !is_file(SQLITE_PATH)
+    ) {
+        return null;
+    }
+
+    ensureStorageDirectories();
+    $base = BACKUP_PATH . '/backup_' . date('Y-m-d_H-i-s') . '_pre-notes-stage5.sqlite';
+    $target = $base;
+    $counter = 1;
+    while (is_file($target)) {
+        $target = substr($base, 0, -7) . '_' . $counter . '.sqlite';
+        $counter++;
+    }
+    if (!copy(SQLITE_PATH, $target)) {
+        throw new RuntimeException('No se pudo crear el backup previo a la migración de notas.');
+    }
     return $target;
 }
 
@@ -669,6 +694,38 @@ function ensureSchemaCompatibility(PDO $pdo): void
     );
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id, is_read, created_at)');
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_proforma_events_proforma_id ON proforma_events(proforma_id, created_at)');
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS proforma_disclaimers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            body TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            is_default INTEGER NOT NULL DEFAULT 1,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_by INTEGER,
+            updated_by INTEGER,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (created_by) REFERENCES users(id),
+            FOREIGN KEY (updated_by) REFERENCES users(id)
+        )'
+    );
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS proforma_disclaimer_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            proforma_id INTEGER NOT NULL,
+            disclaimer_id INTEGER,
+            title_snapshot TEXT NOT NULL,
+            body_snapshot TEXT NOT NULL,
+            sort_order_snapshot INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (proforma_id) REFERENCES proformas(id) ON DELETE CASCADE,
+            FOREIGN KEY (disclaimer_id) REFERENCES proforma_disclaimers(id) ON DELETE SET NULL
+        )'
+    );
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_proforma_disclaimers_order ON proforma_disclaimers(is_active, is_default, sort_order)');
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_proforma_disclaimer_snapshots_proforma ON proforma_disclaimer_snapshots(proforma_id, sort_order_snapshot)');
+    seedDefaultProformaDisclaimers($pdo);
     if (tableExists($pdo, 'proformas')) {
         $pdo->exec(
             "INSERT INTO proforma_email_logs (proforma_id, event_type, to_email, subject, success, error_message, sent_at)

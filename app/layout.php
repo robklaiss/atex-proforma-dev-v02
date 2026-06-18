@@ -40,6 +40,11 @@ function renderHeader(string $title, bool $showPageHeader = true): void
             '/exchange-rates.php' => 'Cambio de divisas',
         ];
     }
+    if (canManageDisclaimers($currentUser)) {
+        $configurationNav += [
+            '/disclaimers.php' => 'Notas y disclaimers',
+        ];
+    }
     if ($isAdmin) {
         $configurationNav += [
             '/users.php' => 'Usuarios',

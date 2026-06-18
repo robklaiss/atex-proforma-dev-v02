@@ -7,6 +7,12 @@ function e(?string $value): string
     return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
 }
 
+function sanitizePlainText(string $value): string
+{
+    $value = preg_replace('~<(script|style)\b[^>]*>.*?</\1>~is', '', $value) ?? $value;
+    return trim(strip_tags($value));
+}
+
 function nowIso(): string
 {
     return date('Y-m-d H:i:s');

@@ -243,6 +243,52 @@ textarea {
     font: inherit;
 }
 
+.settings-card-list {
+    display: grid;
+    gap: 16px;
+}
+
+.settings-card {
+    padding: 18px;
+    border: 1px solid #dedede;
+    border-radius: 10px;
+    background: #fafafa;
+}
+
+.checkbox-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+}
+
+.checkbox-row input {
+    width: auto;
+}
+
+.long-observations {
+    min-height: 220px;
+    resize: vertical;
+}
+
+.proforma-notes {
+    white-space: pre-wrap;
+}
+
+.customer-proposal-notes {
+    margin-top: 24px;
+    text-align: left;
+}
+
+.customer-proposal-notes h2 {
+    margin: 18px 0 8px;
+    font-size: 1rem;
+}
+
+.customer-proposal-notes ul {
+    padding-left: 20px;
+}
+
 textarea {
     resize: vertical;
 }

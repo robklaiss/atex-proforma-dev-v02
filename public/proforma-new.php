@@ -232,7 +232,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $projectName = normalizeProjectDisplayName((string) ($_POST['project_name'] ?? ''));
         $emissionDate = trim((string) ($_POST['emission_date'] ?? ''));
         $validityDays = validateValidityDays((int) ($_POST['validity_days'] ?? 10));
-        $conditions = trim((string) ($_POST['commercial_conditions'] ?? ''));
+        $conditions = sanitizePlainText((string) ($_POST['commercial_conditions'] ?? ''));
         $formatType = (string) ($_POST['format_type'] ?? 'detallado');
         $deliveryAction = (string) ($_POST['delivery_action'] ?? 'save');
         $shouldSendEmail = $deliveryAction === 'send';
@@ -294,8 +294,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         if (!isValidDate($emissionDate)) {
             throw new RuntimeException('La fecha de emisión debe tener formato válido.');
         }
-        if (textLength($conditions) > 400) {
-            throw new RuntimeException('Las condiciones comerciales no pueden superar 400 caracteres.');
+        if (textLength($conditions) > 12000) {
+            throw new RuntimeException('Las observaciones no pueden superar 12000 caracteres.');
         }
         if (!array_key_exists($formatType, proformaFormatOptions())) {
             throw new RuntimeException('Selecciona un formato de proforma valido.');
@@ -512,6 +512,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 ':created_at' => $createdAt,
             ]);
             $proformaId = (int) $pdo->lastInsertId();
+            $disclaimerSnapshots = snapshotDefaultProformaDisclaimers($pdo, $proformaId);
             $publicToken = ensureProformaPublicToken($pdo, $proformaId);
             recordProformaEvent(
                 $pdo,
@@ -561,6 +562,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 'validity_days' => $commercialFields['validity_days'],
                 'expires_at' => $commercialFields['expires_at'],
                 'commercial_conditions' => $conditions,
+                'disclaimers' => $disclaimerSnapshots,
                 'currency_code' => $currencySnapshot['currency_code'],
                 'currency_mode' => $currencySnapshot['currency_mode'],
                 'currency_symbol' => $currencySnapshot['currency_symbol'],
@@ -984,10 +986,11 @@ renderHeader($pageTitle);
 
     <section class="panel">
         <label>
-            Condiciones Comerciales
-            <textarea name="commercial_conditions" id="conditions" maxlength="400" rows="5"><?= e($conditionsDefault) ?></textarea>
+            Observaciones y condiciones comerciales
+            <textarea class="long-observations" name="commercial_conditions" id="conditions" maxlength="12000" rows="10"><?= e($conditionsDefault) ?></textarea>
         </label>
-        <div class="counter"><span id="conditions-count">0</span>/400</div>
+        <span class="field-hint">Se conservan los saltos de línea. Si el contenido no cabe en la primera hoja, continuará automáticamente.</span>
+        <div class="counter"><span id="conditions-count">0</span>/12000</div>
     </section>
 
     <section class="form-actions">
