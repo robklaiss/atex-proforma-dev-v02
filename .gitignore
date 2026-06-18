@@ -1,0 +1,24 @@
+# Configuración local y secretos
+.env
+.env.*
+!.env.example
+storage/config.php
+
+# Datos y archivos generados
+storage/*.sqlite
+storage/**/*.sqlite
+storage/backups/
+storage/pdfs/
+storage/proformas/*.pdf
+storage/signatures/*
+!storage/signatures/.gitkeep
+tmp/
+
+# Copias históricas y paquetes de despliegue locales
+backup/
+deploy-*/
+
+# Archivos del sistema y temporales
+.DS_Store
+screenlog.*
+*.log

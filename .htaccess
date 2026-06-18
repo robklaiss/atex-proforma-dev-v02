@@ -1,0 +1,14 @@
+Options -Indexes
+DirectoryIndex index.php
+
+RewriteEngine On
+
+RewriteRule ^(?:app|migrations|scripts|storage)(?:/|$) - [F,L]
+RewriteRule ^(?:README\.md|screenlog\.0)$ - [F,L]
+RewriteRule ^Proforma.*\.pdf$ - [F,L]
+RewriteRule \.(?:sqlite|sql)$ - [F,L]
+
+RewriteRule ^public/?$ public/index.php [L]
+RewriteRule ^public/ - [L]
+RewriteRule ^$ public/index.php [L]
+RewriteRule ^(.+)$ public/$1 [L,QSA]
