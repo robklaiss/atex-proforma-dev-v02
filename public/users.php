@@ -237,52 +237,68 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 is_array($_FILES['signature_image'] ?? null) ? $_FILES['signature_image'] : [],
                 (string) ($existing['signature_image'] ?? '')
             );
+            $losesAuthorizationPermission = canDecideProformaAuthorization($existing)
+                && !canDecideProformaAuthorization(['role' => $role]);
+            $reassignedAuthorizationCount = 0;
 
             createDatabaseBackup();
-            if ($password !== '') {
-                $stmt = db()->prepare(
-                    'UPDATE users
-                     SET username = :username, role = :role, first_name = :first_name, last_name = :last_name,
-                         email = :email, phone = :phone, unit = :unit, reports_to_id = :reports_to_id,
-                         commercial_position = :commercial_position, signature_image = :signature_image,
-                         password_hash = :password_hash, auth_version = auth_version + 1
-                     WHERE id = :id'
-                );
-                $stmt->execute([
-                    ':username' => $username,
-                    ':role' => $role,
-                    ':first_name' => $firstName,
-                    ':last_name' => $lastName,
-                    ':email' => $email,
-                    ':phone' => $phone,
-                    ':unit' => $unit,
-                    ':reports_to_id' => $reportsToId > 0 ? $reportsToId : null,
-                    ':commercial_position' => $commercialPosition,
-                    ':signature_image' => $signatureImage,
-                    ':password_hash' => password_hash($password, PASSWORD_DEFAULT),
-                    ':id' => $id,
-                ]);
-            } else {
-                $stmt = db()->prepare(
-                    'UPDATE users
-                     SET username = :username, role = :role, first_name = :first_name, last_name = :last_name,
-                         email = :email, phone = :phone, unit = :unit, reports_to_id = :reports_to_id
-                         , commercial_position = :commercial_position, signature_image = :signature_image
-                     WHERE id = :id'
-                );
-                $stmt->execute([
-                    ':username' => $username,
-                    ':role' => $role,
-                    ':first_name' => $firstName,
-                    ':last_name' => $lastName,
-                    ':email' => $email,
-                    ':phone' => $phone,
-                    ':unit' => $unit,
-                    ':reports_to_id' => $reportsToId > 0 ? $reportsToId : null,
-                    ':commercial_position' => $commercialPosition,
-                    ':signature_image' => $signatureImage,
-                    ':id' => $id,
-                ]);
+            db()->beginTransaction();
+            try {
+                if ($password !== '') {
+                    $stmt = db()->prepare(
+                        'UPDATE users
+                         SET username = :username, role = :role, first_name = :first_name, last_name = :last_name,
+                             email = :email, phone = :phone, unit = :unit, reports_to_id = :reports_to_id,
+                             commercial_position = :commercial_position, signature_image = :signature_image,
+                             password_hash = :password_hash, auth_version = auth_version + 1
+                         WHERE id = :id'
+                    );
+                    $stmt->execute([
+                        ':username' => $username,
+                        ':role' => $role,
+                        ':first_name' => $firstName,
+                        ':last_name' => $lastName,
+                        ':email' => $email,
+                        ':phone' => $phone,
+                        ':unit' => $unit,
+                        ':reports_to_id' => $reportsToId > 0 ? $reportsToId : null,
+                        ':commercial_position' => $commercialPosition,
+                        ':signature_image' => $signatureImage,
+                        ':password_hash' => password_hash($password, PASSWORD_DEFAULT),
+                        ':id' => $id,
+                    ]);
+                } else {
+                    $stmt = db()->prepare(
+                        'UPDATE users
+                         SET username = :username, role = :role, first_name = :first_name, last_name = :last_name,
+                             email = :email, phone = :phone, unit = :unit, reports_to_id = :reports_to_id
+                             , commercial_position = :commercial_position, signature_image = :signature_image
+                         WHERE id = :id'
+                    );
+                    $stmt->execute([
+                        ':username' => $username,
+                        ':role' => $role,
+                        ':first_name' => $firstName,
+                        ':last_name' => $lastName,
+                        ':email' => $email,
+                        ':phone' => $phone,
+                        ':unit' => $unit,
+                        ':reports_to_id' => $reportsToId > 0 ? $reportsToId : null,
+                        ':commercial_position' => $commercialPosition,
+                        ':signature_image' => $signatureImage,
+                        ':id' => $id,
+                    ]);
+                }
+                if ($losesAuthorizationPermission) {
+                    $reassignedAuthorizationCount = reassignPendingProformaAuthorizationsForDemotion(db(), $id);
+                }
+                syncUserCountryUnits(db(), $id, $countryUnitIds);
+                db()->commit();
+            } catch (Throwable $exception) {
+                if (db()->inTransaction()) {
+                    db()->rollBack();
+                }
+                throw $exception;
             }
 
             if ($currentAdmin && $id === (int) $currentAdmin['id']) {
@@ -292,12 +308,14 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 $authVersionStmt->execute([':id' => $id]);
                 $_SESSION['auth_version'] = (int) $authVersionStmt->fetchColumn();
             }
-            syncUserCountryUnits(db(), $id, $countryUnitIds);
             setFlash(
                 'success',
-                $password !== ''
+                ($password !== ''
                     ? 'Usuario y contraseña actualizados. Las sesiones anteriores del usuario fueron cerradas.'
-                    : 'Usuario actualizado.'
+                    : 'Usuario actualizado.')
+                . ($reassignedAuthorizationCount > 0
+                    ? ' Se reasignaron ' . $reassignedAuthorizationCount . ' autorizaciones pendientes.'
+                    : '')
             );
         } else {
             if ($password === '') {

@@ -22,7 +22,7 @@ $roles = [
 ];
 $expected = [
     'admin' => [true, true, true, true, true, true, true],
-    'director' => [true, true, true, false, false, true, true],
+    'director' => [true, true, true, false, true, true, true],
     'manager' => [true, true, true, true, true, true, true],
     'supervisor' => [true, true, true, true, true, true, true],
     'commercial_executive' => [false, false, false, true, false, true, true],

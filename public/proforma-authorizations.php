@@ -177,7 +177,7 @@ renderHeader('Autorizaciones');
         <?php elseif (proformaAuthorizationStatus($requestProforma) !== 'PENDING'): ?>
             <p class="flash info">La proforma ya no está pendiente de autorización.</p>
         <?php elseif ($requestAuthorizers === []): ?>
-            <p class="flash warning">No hay supervisores o gerentes disponibles para la unidad país de esta proforma.</p>
+            <p class="flash warning">No hay supervisores, gerentes o directores disponibles para la unidad país de esta proforma.</p>
         <?php else: ?>
             <div class="tracking-grid authorization-summary">
                 <div><span class="muted">Proforma</span><strong><?= e($requestProforma['proforma_number']) ?></strong></div>
@@ -190,7 +190,7 @@ renderHeader('Autorizaciones');
                 <input type="hidden" name="action" value="request">
                 <input type="hidden" name="proforma_id" value="<?= (int) $requestProforma['id'] ?>">
                 <label class="wide">
-                    Supervisor o Gerente
+                    Supervisor, Gerente o Director
                     <select name="requested_to" required>
                         <option value="">Seleccionar superior</option>
                         <?php foreach ($requestAuthorizers as $authorizer): ?>

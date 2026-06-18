@@ -64,6 +64,9 @@ $users = [
     ['executive', 'commercial_executive', 'Eva', 'Ejecutiva', 'eva@atex.test', '0981000001', null, 'Ejecutiva comercial', 'signatures/eva.png'],
     ['supervisor', 'supervisor', 'Sonia', 'Supervisora', 'sonia@atex.test', '0981000002', null, 'Supervisora comercial', ''],
     ['manager', 'manager', 'Gabriel', 'Gerente', 'gabriel@atex.test', '0981000003', null, 'Gerente comercial', ''],
+    ['director', 'director', 'Diana', 'Directora', 'diana@atex.test', '0981000004', null, 'Directora comercial', ''],
+    ['demoted-supervisor', 'supervisor', 'Diego', 'Supervisor', 'diego@atex.test', '0981000005', null, 'Supervisor comercial', ''],
+    ['orphan-supervisor', 'supervisor', 'Olga', 'Supervisora', 'olga@atex.test', '0981000006', null, 'Supervisora comercial', ''],
 ];
 $userIds = [];
 foreach ($users as $user) {
@@ -89,6 +92,10 @@ $paraguayId = (int) $paraguay['id'];
 foreach ($userIds as $userId) {
     syncUserCountryUnits($pdo, $userId, [$paraguayId]);
 }
+$pdo->prepare('UPDATE users SET reports_to_id = :director_id WHERE id = :user_id')->execute([
+    ':director_id' => $userIds['director'],
+    ':user_id' => $userIds['demoted-supervisor'],
+]);
 saveExchangeRate($pdo, $paraguayId, 7500, $userIds['supervisor']);
 
 $pdo->prepare(
@@ -327,6 +334,80 @@ assertSameValue('REJECTED', $rejected['status'], 'proforma rechazada queda REJEC
 assertSameValue('Revisar la condición comercial antes de autorizar.', $rejected['notes'], 'rechazo guarda comentario');
 $storedRejected = $pdo->query('SELECT * FROM proformas WHERE id = ' . $localRejectedId)->fetch();
 assertSameValue(false, proformaCanDownloadFinal($storedRejected), 'proforma rechazada bloquea descarga final');
+
+assertTrueValue(
+    canDecideProformaAuthorization(['role' => 'director']),
+    'Director puede decidir autorizaciones'
+);
+$authorizerProforma = $pdo->query('SELECT * FROM proformas WHERE id = ' . $localRejectedId)->fetch();
+$authorizerRoles = array_column(
+    availableProformaAuthorizers($pdo, $authorizerProforma, $userIds['executive']),
+    'role'
+);
+assertTrueValue(in_array('director', $authorizerRoles, true), 'Director aparece entre autorizadores disponibles');
+
+$localReassignedId = $insertProforma(
+    $pdo,
+    'EPI-20260617-006',
+    (int) $project['id'],
+    6,
+    $clientId,
+    $userIds['executive'],
+    $localSnapshot
+);
+$reassignmentRequest = requestProformaAuthorization(
+    $pdo,
+    $localReassignedId,
+    $userIds['executive'],
+    $userIds['demoted-supervisor']
+);
+$reassignedCount = reassignPendingProformaAuthorizationsForDemotion(
+    $pdo,
+    $userIds['demoted-supervisor']
+);
+assertSameValue(1, $reassignedCount, 'degradación reasigna la autorización pendiente');
+$reassignedAuthorization = findProformaAuthorizationById($pdo, (int) $reassignmentRequest['id']);
+assertSameValue(
+    $userIds['director'],
+    (int) $reassignedAuthorization['requested_to'],
+    'autorización pendiente pasa al superior inmediato'
+);
+assertSameValue('director', $reassignedAuthorization['requested_role'], 'reasignación conserva el rol del nuevo autorizador');
+$directorApproval = approveProformaAuthorization(
+    $pdo,
+    (int) $reassignedAuthorization['id'],
+    $userIds['director']
+);
+assertSameValue('APPROVED', $directorApproval['status'], 'Director aprueba una solicitud reasignada');
+
+$localOrphanId = $insertProforma(
+    $pdo,
+    'EPI-20260617-007',
+    (int) $project['id'],
+    7,
+    $clientId,
+    $userIds['executive'],
+    $localSnapshot
+);
+$orphanRequest = requestProformaAuthorization(
+    $pdo,
+    $localOrphanId,
+    $userIds['executive'],
+    $userIds['orphan-supervisor']
+);
+assertThrows(
+    static fn (): int => reassignPendingProformaAuthorizationsForDemotion(
+        $pdo,
+        $userIds['orphan-supervisor']
+    ),
+    'degradación se rechaza si no existe un superior habilitado'
+);
+$orphanAuthorization = findProformaAuthorizationById($pdo, (int) $orphanRequest['id']);
+assertSameValue(
+    $userIds['orphan-supervisor'],
+    (int) $orphanAuthorization['requested_to'],
+    'una reasignación inválida no deja la solicitud sin responsable'
+);
 
 $secondAllocation = allocateProjectProformaNumber($pdo, (int) $project['id'], '2026-06-18');
 $versionNumber = nextProformaVersionNumber($pdo, $usdId);

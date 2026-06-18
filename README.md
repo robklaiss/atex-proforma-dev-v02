@@ -269,7 +269,7 @@ sqlite3 storage/database/app.sqlite "PRAGMA foreign_key_check;"
 | Dashboard gerencial | Sí | Sí | Sí | Sí | No | No |
 | Crear/editar proformas | Sí | No | Sí | Sí | Sí | No |
 | Solicitar autorización | Sí | No | Sí | Sí | Sí | No |
-| Decidir autorización asignada | Sí | No | Sí | Sí | No | No |
+| Decidir autorización asignada | Sí | Sí | Sí | Sí | No | No |
 | Cambiar estado comercial | Sí | Sí | Sí | Sí | Sí | No |
 | Descargar proformas visibles autorizadas | Sí | Sí | Sí | Sí | Sí | No |
 
@@ -291,7 +291,7 @@ Flujo de autorización:
 
 1. Una proforma USD queda `NOT_REQUIRED`.
 2. Una proforma local queda `PENDING` y bloquea la descarga final.
-3. El creador solicita autorización a Supervisor o Gerente de la unidad.
+3. El creador solicita autorización a Supervisor, Gerente o Director de la unidad.
 4. El autorizador confirma el cambio general, define un cambio especial o rechaza con comentario.
 5. Al aprobar, se actualiza el snapshot de cambio y se regenera el PDF.
 
@@ -365,7 +365,8 @@ La carga de proformas termina con el botón principal `Guardar` y redirige a un 
 
 - Las proformas USD quedan `NOT_REQUIRED` y permiten descarga directa.
 - Las proformas en moneda local quedan `PENDING` y bloquean la descarga final hasta su aprobación.
-- La solicitud se asigna a un Supervisor o Gerente de la misma unidad país y genera una notificación interna.
+- La solicitud se asigna a un Supervisor, Gerente o Director de la misma unidad país y genera una notificación interna.
+- Si un autorizador pierde ese permiso, sus solicitudes pendientes se reasignan al primer superior habilitado de su cadena para la unidad correspondiente. El cambio de rol se cancela si no existe un destino válido.
 - El autorizador puede confirmar el cambio general vigente, aprobar un cambio `SPECIAL` exclusivo para la proforma o rechazar con comentario.
 - Un cambio especial actualiza únicamente el snapshot de la proforma y no modifica `exchange_rates`.
 - Editar una proforma crea una nueva fila, usa el siguiente secuencial del proyecto y conserva `parent_proforma_id`.

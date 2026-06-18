@@ -76,6 +76,7 @@ function authorizationDecisionRoles(): array
     return [
         'supervisor' => 'Supervisor',
         'manager' => 'Gerente',
+        'director' => 'Director',
     ];
 }
 
@@ -83,7 +84,7 @@ function canDecideProformaAuthorization(?array $user): bool
 {
     return $user !== null && in_array(
         (string) ($user['role'] ?? ''),
-        ['admin', 'manager', 'supervisor'],
+        ['admin', 'director', 'manager', 'supervisor'],
         true
     );
 }
@@ -120,10 +121,10 @@ function availableProformaAuthorizers(PDO $pdo, array $proforma, int $excludeUse
            ON ucu.user_id = u.id
           AND ucu.country_unit_id = :country_unit_id
          LEFT JOIN country_units cu ON cu.id = :country_unit_id
-         WHERE u.role IN ('supervisor', 'manager')
+         WHERE u.role IN ('supervisor', 'manager', 'director')
            AND u.id <> :exclude_user_id
            AND (ucu.id IS NOT NULL OR u.unit = cu.name)
-         ORDER BY CASE u.role WHEN 'supervisor' THEN 1 ELSE 2 END,
+         ORDER BY CASE u.role WHEN 'supervisor' THEN 1 WHEN 'manager' THEN 2 ELSE 3 END,
                   u.first_name COLLATE NOCASE,
                   u.last_name COLLATE NOCASE,
                   u.username COLLATE NOCASE"
@@ -134,6 +135,160 @@ function availableProformaAuthorizers(PDO $pdo, array $proforma, int $excludeUse
     ]);
 
     return $stmt->fetchAll();
+}
+
+function findAuthorizationReassignmentSuperior(
+    PDO $pdo,
+    int $userId,
+    int $countryUnitId
+): ?array {
+    if ($userId <= 0 || $countryUnitId <= 0) {
+        return null;
+    }
+
+    $nextStmt = $pdo->prepare(
+        'SELECT leader.*
+         FROM users current_user
+         JOIN users leader ON leader.id = current_user.reports_to_id
+         WHERE current_user.id = :user_id
+         LIMIT 1'
+    );
+    $unitStmt = $pdo->prepare(
+        'SELECT 1
+         FROM users u
+         LEFT JOIN user_country_units ucu
+           ON ucu.user_id = u.id
+          AND ucu.country_unit_id = :country_unit_id
+         LEFT JOIN country_units cu ON cu.id = :country_unit_id
+         WHERE u.id = :user_id
+           AND (u.role = \'admin\' OR ucu.id IS NOT NULL OR u.unit = cu.name)
+         LIMIT 1'
+    );
+
+    $visited = [];
+    $currentId = $userId;
+    while ($currentId > 0 && !isset($visited[$currentId])) {
+        $visited[$currentId] = true;
+        $nextStmt->execute([':user_id' => $currentId]);
+        $leader = $nextStmt->fetch();
+        if (!$leader) {
+            return null;
+        }
+
+        $leaderId = (int) $leader['id'];
+        if (canDecideProformaAuthorization($leader)) {
+            $unitStmt->execute([
+                ':country_unit_id' => $countryUnitId,
+                ':user_id' => $leaderId,
+            ]);
+            if ($unitStmt->fetchColumn()) {
+                return $leader;
+            }
+        }
+
+        $currentId = $leaderId;
+    }
+
+    return null;
+}
+
+function reassignPendingProformaAuthorizationsForDemotion(PDO $pdo, int $userId): int
+{
+    if ($userId <= 0 || !tableExists($pdo, 'proforma_authorizations')) {
+        return 0;
+    }
+
+    $pendingStmt = $pdo->prepare(
+        "SELECT a.id, a.proforma_id, p.proforma_number, p.country_unit_id,
+                COALESCE(cu.name, p.signer_unit, '') AS country_unit_name
+         FROM proforma_authorizations a
+         JOIN proformas p ON p.id = a.proforma_id
+         LEFT JOIN country_units cu ON cu.id = p.country_unit_id
+         WHERE a.requested_to = :user_id
+           AND a.status = 'PENDING'
+         ORDER BY a.id"
+    );
+    $pendingStmt->execute([':user_id' => $userId]);
+    $pendingAuthorizations = $pendingStmt->fetchAll();
+    if ($pendingAuthorizations === []) {
+        return 0;
+    }
+
+    $assignments = [];
+    foreach ($pendingAuthorizations as $authorization) {
+        $countryUnitId = (int) $authorization['country_unit_id'];
+        $superior = findAuthorizationReassignmentSuperior($pdo, $userId, $countryUnitId);
+        if (!$superior) {
+            $unitName = trim((string) $authorization['country_unit_name']);
+            throw new RuntimeException(
+                'No se puede cambiar el rol: la autorización pendiente de la proforma '
+                . (string) $authorization['proforma_number']
+                . ' no tiene un superior habilitado'
+                . ($unitName !== '' ? ' para la unidad ' . $unitName : '')
+                . '.'
+            );
+        }
+        $assignments[] = [$authorization, $superior];
+    }
+
+    $now = nowIso();
+    $updateStmt = $pdo->prepare(
+        "UPDATE proforma_authorizations
+         SET requested_to = :requested_to,
+             requested_role = :requested_role,
+             updated_at = :updated_at
+         WHERE id = :id
+           AND requested_to = :previous_user_id
+           AND status = 'PENDING'"
+    );
+    $deleteNotificationStmt = $pdo->prepare(
+        "DELETE FROM notifications
+         WHERE user_id = :user_id
+           AND type = 'PROFORMA_AUTHORIZATION_REQUESTED'
+           AND related_entity_type = 'proforma_authorization'
+           AND related_entity_id = :authorization_id"
+    );
+
+    $reassigned = 0;
+    foreach ($assignments as [$authorization, $superior]) {
+        $superiorId = (int) $superior['id'];
+        $updateStmt->execute([
+            ':requested_to' => $superiorId,
+            ':requested_role' => (string) $superior['role'],
+            ':updated_at' => $now,
+            ':id' => (int) $authorization['id'],
+            ':previous_user_id' => $userId,
+        ]);
+        if ($updateStmt->rowCount() !== 1) {
+            throw new RuntimeException('No se pudo reasignar una autorización pendiente.');
+        }
+
+        $deleteNotificationStmt->execute([
+            ':user_id' => $userId,
+            ':authorization_id' => (int) $authorization['id'],
+        ]);
+        createInternalNotification(
+            $pdo,
+            $superiorId,
+            'PROFORMA_AUTHORIZATION_REQUESTED',
+            'Autorización de tipo de cambio reasignada',
+            'La proforma ' . (string) $authorization['proforma_number']
+                . ' requiere autorización de tipo de cambio.',
+            'proforma_authorization',
+            (int) $authorization['id']
+        );
+        recordProformaEvent(
+            $pdo,
+            (int) $authorization['proforma_id'],
+            null,
+            'AUTHORIZATION_REASSIGNED',
+            'Solicitud reasignada automáticamente a ' . userFullName($superior)
+                . ' (' . userRoleLabel((string) $superior['role']) . ') por cambio de rol.'
+        );
+        $reassigned++;
+    }
+
+    return $reassigned;
 }
 
 function recordProformaEvent(
@@ -170,6 +325,7 @@ function proformaEventLabel(string $eventType): string
         'CREATED' => 'Creado',
         'EDITED_FROM' => 'Editado por',
         'AUTHORIZATION_REQUESTED' => 'Autorización Solicitada',
+        'AUTHORIZATION_REASSIGNED' => 'Autorización Reasignada',
         'AUTHORIZATION_APPROVED' => 'Autorización Aprobada',
         'AUTHORIZATION_REJECTED' => 'Autorización Denegada',
         'DOWNLOADED' => 'Descargado',
@@ -275,7 +431,7 @@ function requestProformaAuthorization(
         }
     }
     if (!$selected) {
-        throw new RuntimeException('El supervisor o gerente seleccionado no está disponible para esta unidad país.');
+        throw new RuntimeException('El supervisor, gerente o director seleccionado no está disponible para esta unidad país.');
     }
 
     $pending = $pdo->prepare(
