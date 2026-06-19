@@ -31,6 +31,7 @@ function db(): PDO
     createAuthorizationMigrationBackupIfNeeded($GLOBALS['app_pdo']);
     createNotesMigrationBackupIfNeeded($GLOBALS['app_pdo']);
     createDashboardMigrationBackupIfNeeded($GLOBALS['app_pdo']);
+    createSuperiorSnapshotMigrationBackupIfNeeded($GLOBALS['app_pdo']);
     ensureSchemaCompatibility($GLOBALS['app_pdo']);
 
     return $GLOBALS['app_pdo'];
@@ -217,6 +218,30 @@ function createDashboardMigrationBackupIfNeeded(PDO $pdo): ?string
     }
     if (!copy(SQLITE_PATH, $target)) {
         throw new RuntimeException('No se pudo crear el backup previo al dashboard gerencial.');
+    }
+    return $target;
+}
+
+function createSuperiorSnapshotMigrationBackupIfNeeded(PDO $pdo): ?string
+{
+    if (
+        !tableExists($pdo, 'proformas')
+        || columnExists($pdo, 'proformas', 'superior_id_snapshot')
+        || !is_file(SQLITE_PATH)
+    ) {
+        return null;
+    }
+
+    ensureStorageDirectories();
+    $base = BACKUP_PATH . '/backup_' . date('Y-m-d_H-i-s') . '_pre-superior-snapshot.sqlite';
+    $target = $base;
+    $counter = 1;
+    while (is_file($target)) {
+        $target = substr($base, 0, -7) . '_' . $counter . '.sqlite';
+        $counter++;
+    }
+    if (!copy(SQLITE_PATH, $target)) {
+        throw new RuntimeException('No se pudo crear el backup previo al historial de superiores.');
     }
     return $target;
 }
@@ -531,6 +556,8 @@ function ensureSchemaCompatibility(PDO $pdo): void
             'commercial_status_updated_at' => 'TEXT',
             'commercial_status_notes' => "TEXT NOT NULL DEFAULT ''",
             'seller_id' => 'INTEGER',
+            'superior_id_snapshot' => 'INTEGER',
+            'superior_snapshot_captured' => 'INTEGER NOT NULL DEFAULT 0',
             'signer_role' => "TEXT NOT NULL DEFAULT ''",
             'signer_name' => "TEXT NOT NULL DEFAULT ''",
             'signer_email' => "TEXT NOT NULL DEFAULT ''",
@@ -622,6 +649,16 @@ function ensureSchemaCompatibility(PDO $pdo): void
         );
         $pdo->exec('UPDATE proformas SET seller_id = created_by WHERE seller_id IS NULL');
         $pdo->exec(
+            'UPDATE proformas
+             SET superior_id_snapshot = (
+                 SELECT reports_to_id
+                 FROM users
+                 WHERE users.id = proformas.seller_id
+             ),
+                 superior_snapshot_captured = 1
+             WHERE superior_snapshot_captured = 0'
+        );
+        $pdo->exec(
             "UPDATE proformas
              SET signer_role = COALESCE((SELECT role FROM users WHERE users.id = proformas.seller_id), '')
              WHERE TRIM(COALESCE(signer_role, '')) = ''"
@@ -682,6 +719,7 @@ function ensureSchemaCompatibility(PDO $pdo): void
              WHERE project_id IS NOT NULL AND project_sequence IS NOT NULL'
         );
         $pdo->exec('CREATE INDEX IF NOT EXISTS idx_proformas_seller_id ON proformas(seller_id)');
+        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_proformas_superior_snapshot ON proformas(superior_id_snapshot)');
         $pdo->exec('CREATE INDEX IF NOT EXISTS idx_proformas_status ON proformas(status)');
         $pdo->exec('CREATE INDEX IF NOT EXISTS idx_proformas_commercial_status ON proformas(commercial_status)');
         $pdo->exec('CREATE INDEX IF NOT EXISTS idx_proformas_emission_date ON proformas(emission_date)');

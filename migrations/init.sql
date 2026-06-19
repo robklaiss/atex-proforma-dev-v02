@@ -182,6 +182,8 @@ CREATE TABLE IF NOT EXISTS proformas (
     commercial_status_notes TEXT NOT NULL DEFAULT '',
     pdf_path TEXT,
     seller_id INTEGER,
+    superior_id_snapshot INTEGER,
+    superior_snapshot_captured INTEGER NOT NULL DEFAULT 0,
     signer_role TEXT NOT NULL DEFAULT '',
     signer_name TEXT NOT NULL DEFAULT '',
     signer_email TEXT NOT NULL DEFAULT '',
@@ -206,6 +208,7 @@ CREATE TABLE IF NOT EXISTS proformas (
     FOREIGN KEY (contact_id) REFERENCES client_contacts(id),
     FOREIGN KEY (contact_email_id) REFERENCES contact_emails(id),
     FOREIGN KEY (seller_id) REFERENCES users(id),
+    FOREIGN KEY (superior_id_snapshot) REFERENCES users(id),
     FOREIGN KEY (won_by) REFERENCES users(id),
     FOREIGN KEY (commercial_status_updated_by) REFERENCES users(id),
     FOREIGN KEY (country_unit_id) REFERENCES country_units(id),
@@ -324,6 +327,7 @@ CREATE INDEX IF NOT EXISTS idx_proformas_project_id ON proformas(project_id);
 CREATE INDEX IF NOT EXISTS idx_proformas_parent_id ON proformas(parent_proforma_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_proformas_project_sequence ON proformas(project_id, project_sequence);
 CREATE INDEX IF NOT EXISTS idx_proformas_seller_id ON proformas(seller_id);
+CREATE INDEX IF NOT EXISTS idx_proformas_superior_snapshot ON proformas(superior_id_snapshot);
 CREATE INDEX IF NOT EXISTS idx_proformas_status ON proformas(status);
 CREATE INDEX IF NOT EXISTS idx_proformas_commercial_status ON proformas(commercial_status);
 CREATE INDEX IF NOT EXISTS idx_proformas_emission_date ON proformas(emission_date);

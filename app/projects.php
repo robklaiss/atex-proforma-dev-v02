@@ -142,14 +142,16 @@ function nextProformaVersionNumber(PDO $pdo, int $sourceProformaId): int
     }
 
     $stmt = $pdo->prepare(
-        'WITH RECURSIVE family(id, version_number) AS (
-             SELECT id, version_number
+        'WITH RECURSIVE family(id, parent_proforma_id, version_number) AS (
+             SELECT id, parent_proforma_id, version_number
              FROM proformas
              WHERE id = :source_id
-             UNION ALL
-             SELECT child.id, child.version_number
-             FROM proformas child
-             JOIN family parent ON child.parent_proforma_id = parent.id
+             UNION
+             SELECT related.id, related.parent_proforma_id, related.version_number
+             FROM proformas related
+             JOIN family current
+               ON related.id = current.parent_proforma_id
+               OR related.parent_proforma_id = current.id
          )
          SELECT COALESCE(MAX(version_number), 0) + 1
          FROM family'
@@ -157,6 +159,48 @@ function nextProformaVersionNumber(PDO $pdo, int $sourceProformaId): int
     $stmt->execute([':source_id' => $sourceProformaId]);
 
     return max(2, (int) $stmt->fetchColumn());
+}
+
+function latestProformaVersionId(PDO $pdo, int $sourceProformaId): int
+{
+    if ($sourceProformaId <= 0) {
+        return 0;
+    }
+
+    $stmt = $pdo->prepare(
+        'WITH RECURSIVE family(id, parent_proforma_id, version_number, project_sequence) AS (
+             SELECT id, parent_proforma_id, version_number, project_sequence
+             FROM proformas
+             WHERE id = :source_id
+             UNION
+             SELECT related.id, related.parent_proforma_id, related.version_number, related.project_sequence
+             FROM proformas related
+             JOIN family current
+               ON related.id = current.parent_proforma_id
+               OR related.parent_proforma_id = current.id
+         )
+         SELECT id
+         FROM family
+         ORDER BY version_number DESC, project_sequence DESC, id DESC
+         LIMIT 1'
+    );
+    $stmt->execute([':source_id' => $sourceProformaId]);
+
+    return (int) $stmt->fetchColumn();
+}
+
+function proformaIsLatestVersion(PDO $pdo, int $proformaId): bool
+{
+    return $proformaId > 0 && latestProformaVersionId($pdo, $proformaId) === $proformaId;
+}
+
+function assertProformaIsLatestVersion(PDO $pdo, int $proformaId): void
+{
+    if (!proformaIsLatestVersion($pdo, $proformaId)) {
+        throw new RuntimeException(
+            'Esta proforma fue reemplazada por una versión posterior. La versión anterior solo puede visualizarse y descargarse.'
+        );
+    }
 }
 
 function backfillLegacyProjects(PDO $pdo): void

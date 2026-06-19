@@ -77,7 +77,7 @@ function renderHeader(string $title, bool $showPageHeader = true): void
     <aside class="sidebar">
         <div class="sidebar-header">
             <a class="brand" href="<?= e(publicPath(userHomePath($currentUser))) ?>">
-                <img class="brand-logo" src="<?= e(publicPath('/assets/atex_latam_logo.png')) ?>" alt="ATEX LATAM" width="160">
+                <img class="brand-logo" src="<?= e(publicPath('/assets/atex-paraguay.png')) ?>" alt="ATEX Paraguay" width="160">
             </a>
             <button class="mobile-menu-toggle" type="button" aria-expanded="false" aria-controls="main-navigation">
                 <span class="mobile-menu-icon" aria-hidden="true">

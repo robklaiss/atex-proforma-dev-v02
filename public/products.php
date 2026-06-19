@@ -88,11 +88,11 @@ renderHeader('Productos');
         </label>
         <label>
             Precio venta (US$)
-            <input type="number" min="0" step="0.01" name="precio_venta" value="<?= e((string) ($edit['precio_venta'] ?? '0')) ?>">
+            <input type="number" min="0" step="0.0001" name="precio_venta" value="<?= e((string) ($edit['precio_venta'] ?? '0')) ?>">
         </label>
         <label>
             Precio alquiler diario (US$)
-            <input type="number" min="0" step="0.01" name="precio_alquiler" value="<?= e((string) ($edit['precio_alquiler'] ?? '0')) ?>">
+            <input type="number" min="0" step="0.0001" name="precio_alquiler" value="<?= e((string) ($edit['precio_alquiler'] ?? '0')) ?>">
         </label>
         <label class="wide">
             Referencia
@@ -123,11 +123,11 @@ renderHeader('Productos');
             </thead>
             <tbody>
             <?php foreach ($products as $product): ?>
-                <tr data-filter-search="<?= e($product['nombre'] . ' ' . ($product['descripcion'] ?? '') . ' ' . formatMoney((float) $product['precio_venta'], 'USD') . ' ' . formatMoney((float) $product['precio_alquiler'], 'USD')) ?>">
+                <tr data-filter-search="<?= e($product['nombre'] . ' ' . ($product['descripcion'] ?? '') . ' ' . formatUsdUnitPrice((float) $product['precio_venta']) . ' ' . formatUsdUnitPrice((float) $product['precio_alquiler'])) ?>">
                     <td><?= e($product['nombre']) ?></td>
                     <td><?= e($product['descripcion']) ?></td>
-                    <td class="right"><?= e(formatMoney((float) $product['precio_venta'], 'USD')) ?></td>
-                    <td class="right product-rental-column"><?= e(formatMoney((float) $product['precio_alquiler'], 'USD')) ?></td>
+                    <td class="right"><?= e(formatUsdUnitPrice((float) $product['precio_venta'])) ?></td>
+                    <td class="right product-rental-column"><?= e(formatUsdUnitPrice((float) $product['precio_alquiler'])) ?></td>
                     <td class="right"><a href="<?= e(publicPath('/products.php?edit=' . (int) $product['id'])) ?>">Editar</a></td>
                 </tr>
             <?php endforeach; ?>

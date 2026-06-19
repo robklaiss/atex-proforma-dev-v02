@@ -74,6 +74,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             if (!$proforma) {
                 throw new RuntimeException('La proforma seleccionada no existe.');
             }
+            assertProformaIsLatestVersion(db(), $id);
             if (proformaCommercialStatus($proforma) !== 'WON') {
                 createDatabaseBackup();
                 updateProformaCommercialStatus(db(), $id, 'WON', (int) $currentUser['id']);
@@ -83,6 +84,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         }
 
         if ($action === 'reopen' && $isAdminUser) {
+            assertProformaIsLatestVersion(db(), $id);
             createDatabaseBackup();
             updateProformaCommercialStatus(db(), $id, 'OPEN', (int) $currentUser['id']);
             setFlash('success', 'Proforma reabierta.');
@@ -136,6 +138,10 @@ $proformasStmt = db()->prepare(
 );
 $proformasStmt->execute($proformaParams);
 $proformas = $proformasStmt->fetchAll();
+foreach ($proformas as &$proforma) {
+    $proforma['is_latest_version'] = proformaIsLatestVersion(db(), (int) $proforma['id']) ? 1 : 0;
+}
+unset($proforma);
 
 $proformaGroups = [];
 foreach ($proformas as $proforma) {
@@ -252,6 +258,7 @@ renderHeader('Proformas');
                     <?php foreach ($group['proformas'] as $proforma): ?>
                         <?php
                         $isWon = proformaCommercialStatus($proforma) === 'WON';
+                        $isLatestVersion = !proformaIsSuperseded($proforma);
                         $publicToken = trim((string) ($proforma['public_token'] ?? ''));
                         if ($publicToken === '') {
                             $publicToken = ensureProformaPublicToken(db(), (int) $proforma['id']);
@@ -292,18 +299,11 @@ renderHeader('Proformas');
                             <td class="right">
                                 <div class="actions-cell">
                                     <a class="button small" href="<?= e(publicPath('/proforma-preview.php?id=' . (int) $proforma['id'])) ?>">Ver</a>
-                                    <?php if (canCreateProformas($currentUser) && (!$isWon || $isAdminUser)): ?>
+                                    <?php if (canCreateProformas($currentUser) && $isLatestVersion && (!$isWon || $isAdminUser)): ?>
                                         <a class="button small" href="<?= e(publicPath('/proforma-new.php?edit_id=' . (int) $proforma['id'])) ?>">Editar</a>
                                     <?php endif; ?>
-                                    <?php if (canCreateProformas($currentUser)): ?>
+                                    <?php if (canCreateProformas($currentUser) && $isLatestVersion): ?>
                                         <a class="button small" href="<?= e(publicPath('/proforma-new.php?clone_id=' . (int) $proforma['id'])) ?>">Clonar</a>
-                                    <?php endif; ?>
-                                    <?php if (
-                                        canCreateProformas($currentUser)
-                                        && normalizeProformaCurrencyMode((string) $proforma['currency_mode']) === 'LOCAL'
-                                        && proformaAuthorizationStatus($proforma) === 'PENDING'
-                                    ): ?>
-                                        <a class="button small" href="<?= e(publicPath('/proforma-authorizations.php?proforma_id=' . (int) $proforma['id'])) ?>">Autorizar</a>
                                     <?php endif; ?>
                                     <?php if (proformaCanDownloadFinal($proforma)): ?>
                                         <a class="button small" href="<?= e(publicPath('/download-proforma.php?id=' . (int) $proforma['id'])) ?>">Descargar</a>

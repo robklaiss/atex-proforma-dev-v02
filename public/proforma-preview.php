@@ -42,6 +42,8 @@ if (!$proforma || empty($proforma['pdf_path'])) {
     renderFooter();
     exit;
 }
+$proforma['is_latest_version'] = proformaIsLatestVersion(db(), $id) ? 1 : 0;
+$isLatestVersion = !proformaIsSuperseded($proforma);
 
 $filename = safeBasename((string) $proforma['pdf_path']);
 $path = PROFORMA_STORAGE_PATH . '/' . $filename;
@@ -112,15 +114,11 @@ $publicLink = proformaPublicLink($publicToken);
     <?php else: ?>
         <span class="button disabled" title="<?= e(proformaDownloadBlockMessage($proforma)) ?>">Descargar</span>
     <?php endif; ?>
-    <?php if (canCreateProformas($currentUser)): ?>
+    <?php if (canCreateProformas($currentUser) && $isLatestVersion): ?>
         <a class="button" href="<?= e(publicPath('/proforma-new.php?edit_id=' . $id)) ?>">Editar</a>
     <?php endif; ?>
-    <?php if ($isLocalCurrency && $authorizationStatus === 'PENDING' && canCreateProformas($currentUser)): ?>
-        <?php if ($pendingAuthorization): ?>
-            <a class="button" href="<?= e(publicPath('/proforma-authorizations.php')) ?>">Solicitud enviada</a>
-        <?php else: ?>
-            <a class="button" href="<?= e(publicPath('/proforma-authorizations.php?proforma_id=' . $id)) ?>">Autorizar</a>
-        <?php endif; ?>
+    <?php if ($isLocalCurrency && $authorizationStatus === 'PENDING' && $pendingAuthorization): ?>
+        <a class="button" href="<?= e(publicPath('/proforma-authorizations.php')) ?>">Solicitud enviada</a>
     <?php endif; ?>
     <span class="badge <?= e(commercialStatusBadgeClass($proforma)) ?>"><?= e(commercialStatusLabel($proforma)) ?></span>
     <?php if (canCreateProformas($currentUser)): ?>
@@ -131,6 +129,8 @@ $publicLink = proformaPublicLink($publicToken);
 
 <?php if (!$canDownloadFinal): ?>
     <div class="flash <?= $authorizationStatus === 'REJECTED' ? 'error' : 'warning' ?>"><?= e(proformaDownloadBlockMessage($proforma)) ?></div>
+<?php elseif (!$isLatestVersion): ?>
+    <div class="flash warning">Esta versión fue reemplazada por una proforma posterior. Se conserva únicamente para consulta y descarga.</div>
 <?php elseif (proformaIsManagerSigned($proforma)): ?>
     <div class="flash info">Esta proforma está firmada por un gerente y no requiere autorización, sin importar la moneda.</div>
 <?php elseif (!$isLocalCurrency): ?>
@@ -150,7 +150,10 @@ $publicLink = proformaPublicLink($publicToken);
         </div>
         <div>
             <span class="muted">Estado</span>
-            <strong><span class="badge <?= e(proformaAuthorizationBadgeClass($proforma)) ?>"><?= e(proformaAuthorizationLabel($proforma)) ?></span></strong>
+            <strong>
+                <span class="badge <?= e(proformaExpirationBadgeClass($proforma)) ?>"><?= e(proformaExpirationLabel($proforma)) ?></span>
+                <span class="badge <?= e(proformaAuthorizationBadgeClass($proforma)) ?>"><?= e(proformaAuthorizationLabel($proforma)) ?></span>
+            </strong>
         </div>
         <div>
             <span class="muted">Estado comercial</span>
@@ -196,7 +199,7 @@ $publicLink = proformaPublicLink($publicToken);
     <?php endif; ?>
 </section>
 
-<?php if (canUpdateCommercialStatus($currentUser)): ?>
+<?php if (canUpdateCommercialStatus($currentUser) && $isLatestVersion): ?>
 <section class="panel">
     <h2>Resultado comercial</h2>
     <form method="post" action="<?= e(publicPath('/proforma-status.php')) ?>" class="grid-form commercial-status-form">

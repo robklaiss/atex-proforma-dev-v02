@@ -121,13 +121,13 @@ $pdo->exec(
 $projectId = (int) $pdo->lastInsertId();
 $insertProforma = $pdo->prepare(
     'INSERT INTO proformas
-     (proforma_number, project_id, version_number, project_sequence, client_id, company_id,
+     (proforma_number, project_id, parent_proforma_id, version_number, project_sequence, client_id, company_id,
       company_name_snapshot, project_name, emission_date, expiration_date, currency_code,
       currency_mode, currency_symbol, country_unit_id, exchange_rate_used, authorization_status,
       subtotal, tax_total, total, status, commercial_status, seller_id, signer_name, signer_unit,
       created_by, created_at)
      VALUES
-     (:number, :project_id, 1, :sequence, :client_id, :client_id,
+     (:number, :project_id, :parent_proforma_id, :version_number, :sequence, :client_id, :client_id,
       :company_name, \'Dashboard Stage 6\', :emission_date, \'2026-07-01\', :currency_code,
       :currency_mode, :currency_symbol, :country_unit_id, :exchange_rate_used, :authorization_status,
       :total, 0, :total, :legacy_status, :commercial_status, :seller_id, :signer_name, :signer_unit,
@@ -146,6 +146,8 @@ foreach ($rows as $index => [$suffix, $country, $unitId, $sellerId, $date, $comm
     $insertProforma->execute([
         ':number' => 'DS6-20260618-' . $suffix,
         ':project_id' => $projectId,
+        ':parent_proforma_id' => null,
+        ':version_number' => 1,
         ':sequence' => $index + 1,
         ':client_id' => $clientIds[$country],
         ':company_name' => 'Cliente ' . $country,
@@ -190,6 +192,98 @@ $evaRows = array_values(array_filter($metrics['sellers'], static fn (array $row)
 stage6AssertSame(1, count($evaRows), 'dashboard agrupa por ejecutivo');
 stage6AssertSame(3, $evaRows[0]['emitted'], 'dashboard calcula emitidos por ejecutivo');
 
+$pdo->exec(
+    "INSERT INTO projects (name, normalized_name, prefix, created_at, updated_at)
+     VALUES ('Proyecto versionado', 'proyecto versionado', 'VER', '2026-06-01 09:00:00', '2026-06-01 09:00:00')"
+);
+$versionedProjectId = (int) $pdo->lastInsertId();
+$insertProforma->execute([
+    ':number' => 'VER-20260701-001',
+    ':project_id' => $versionedProjectId,
+    ':parent_proforma_id' => null,
+    ':version_number' => 1,
+    ':sequence' => 1,
+    ':client_id' => $clientIds['Paraguay'],
+    ':company_name' => 'Cliente Paraguay',
+    ':emission_date' => '2026-07-01',
+    ':currency_code' => 'USD',
+    ':currency_mode' => 'USD',
+    ':currency_symbol' => 'US$',
+    ':country_unit_id' => $paraguayId,
+    ':exchange_rate_used' => 1.0,
+    ':authorization_status' => 'NOT_REQUIRED',
+    ':total' => 100.0,
+    ':legacy_status' => 'emitida',
+    ':commercial_status' => 'OPEN',
+    ':seller_id' => $userIds['eva'],
+    ':signer_name' => 'Eva Ejecutiva',
+    ':signer_unit' => 'Paraguay',
+    ':created_by' => $userIds['eva'],
+    ':created_at' => '2026-07-01 09:00:00',
+]);
+$supersededProformaId = (int) $pdo->lastInsertId();
+$insertProforma->execute([
+    ':number' => 'VER-20260702-002',
+    ':project_id' => $versionedProjectId,
+    ':parent_proforma_id' => $supersededProformaId,
+    ':version_number' => 2,
+    ':sequence' => 2,
+    ':client_id' => $clientIds['Paraguay'],
+    ':company_name' => 'Cliente Paraguay',
+    ':emission_date' => '2026-07-02',
+    ':currency_code' => 'USD',
+    ':currency_mode' => 'USD',
+    ':currency_symbol' => 'US$',
+    ':country_unit_id' => $paraguayId,
+    ':exchange_rate_used' => 1.0,
+    ':authorization_status' => 'NOT_REQUIRED',
+    ':total' => 150.0,
+    ':legacy_status' => 'venta_ganada',
+    ':commercial_status' => 'WON',
+    ':seller_id' => $userIds['eva'],
+    ':signer_name' => 'Eva Ejecutiva',
+    ':signer_unit' => 'Paraguay',
+    ':created_by' => $userIds['eva'],
+    ':created_at' => '2026-07-02 09:00:00',
+]);
+$insertProforma->execute([
+    ':number' => 'VER-20260703-003',
+    ':project_id' => $versionedProjectId,
+    ':parent_proforma_id' => null,
+    ':version_number' => 1,
+    ':sequence' => 3,
+    ':client_id' => $clientIds['Colombia'],
+    ':company_name' => 'Cliente Colombia',
+    ':emission_date' => '2026-07-03',
+    ':currency_code' => 'USD',
+    ':currency_mode' => 'USD',
+    ':currency_symbol' => 'US$',
+    ':country_unit_id' => $colombiaId,
+    ':exchange_rate_used' => 1.0,
+    ':authorization_status' => 'NOT_REQUIRED',
+    ':total' => 200.0,
+    ':legacy_status' => 'emitida',
+    ':commercial_status' => 'OPEN',
+    ':seller_id' => $userIds['carlos'],
+    ':signer_name' => 'Carlos Ejecutivo',
+    ':signer_unit' => 'Colombia',
+    ':created_by' => $userIds['carlos'],
+    ':created_at' => '2026-07-03 09:00:00',
+]);
+
+$julyFilters = dashboardBuildFilters([
+    'date_range' => 'custom',
+    'date_from' => '2026-07-01',
+    'date_to' => '2026-07-31',
+], $allUnits, $allSellers);
+$julyMetrics = dashboardMetrics($pdo, $julyFilters);
+$julyByUnit = array_column($julyMetrics['units'], null, 'unit');
+stage6AssertSame(1, $julyByUnit['Paraguay']['emitted'], 'edición vigente sustituye a la proforma anterior en emitidos');
+stage6AssertSame(150.0, $julyByUnit['Paraguay']['emitted_usd'], 'edición sustituida deja de sumar monto emitido');
+stage6AssertSame(1, $julyByUnit['Paraguay']['won'], 'indicadores usan el estado comercial de la edición vigente');
+stage6AssertSame(1, $julyByUnit['Colombia']['emitted'], 'clon del mismo proyecto para otro cliente suma como propuesta nueva');
+stage6AssertSame(2, dashboardTotals($julyMetrics['units'])['emitted'], 'proyecto versionado y clon para nuevo cliente suman dos propuestas');
+
 $mayFilters = dashboardBuildFilters([
     'date_range' => 'custom',
     'date_from' => '2026-05-01',
@@ -227,5 +321,68 @@ stage6AssertSame(7500.0, (float) $localStored['exchange_rate_used'], 'cambio vig
 $manager = $pdo->query('SELECT * FROM users WHERE id = ' . $userIds['manager'])->fetch();
 $managerUnits = dashboardAllowedUnits($pdo, $manager);
 stage6AssertSame(['Paraguay'], array_column($managerUnits, 'name'), 'Gerente ve solo sus unidades país');
+
+$insertUser->execute([
+    ':username' => 'supervisor-new',
+    ':password_hash' => 'x',
+    ':role' => 'supervisor',
+    ':first_name' => 'Nueva',
+    ':last_name' => 'Supervisora',
+    ':unit' => 'Paraguay',
+    ':created_at' => '2026-06-18 10:00:00',
+]);
+$newSupervisorId = (int) $pdo->lastInsertId();
+$pdo->prepare('UPDATE users SET reports_to_id = :superior_id WHERE id = :id')->execute([
+    ':superior_id' => $userIds['supervisor'],
+    ':id' => $userIds['eva'],
+]);
+$oldHistoricalId = (int) $pdo->query("SELECT id FROM proformas WHERE proforma_number = 'DS6-20260618-001'")->fetchColumn();
+$pdo->prepare('UPDATE proformas SET superior_id_snapshot = :superior_id WHERE id = :id')->execute([
+    ':superior_id' => $userIds['supervisor'],
+    ':id' => $oldHistoricalId,
+]);
+$pdo->prepare('UPDATE users SET reports_to_id = :superior_id WHERE id = :id')->execute([
+    ':superior_id' => $newSupervisorId,
+    ':id' => $userIds['eva'],
+]);
+$newHistoricalId = (int) $pdo->query("SELECT id FROM proformas WHERE proforma_number = 'DS6-20260618-002'")->fetchColumn();
+$pdo->prepare('UPDATE proformas SET superior_id_snapshot = :superior_id WHERE id = :id')->execute([
+    ':superior_id' => $newSupervisorId,
+    ':id' => $newHistoricalId,
+]);
+$GLOBALS['app_pdo'] = $pdo;
+
+$visibleProformaIds = static function (array $user, string $prefix) use ($pdo): array {
+    [$sql, $params] = proformaVisibilityClause($user, 'p', 'seller', 'c', $prefix);
+    $stmt = $pdo->prepare(
+        'SELECT p.id
+         FROM proformas p
+         JOIN clients c ON c.id = p.client_id
+         LEFT JOIN users seller ON seller.id = p.seller_id
+         WHERE ' . $sql . '
+         ORDER BY p.id'
+    );
+    $stmt->execute($params);
+    return array_map('intval', array_column($stmt->fetchAll(), 'id'));
+};
+
+$oldSupervisorVisible = $visibleProformaIds(
+    ['id' => $userIds['supervisor'], 'role' => 'supervisor', 'unit' => 'Paraguay'],
+    'old_supervisor_history'
+);
+$newSupervisorVisible = $visibleProformaIds(
+    ['id' => $newSupervisorId, 'role' => 'supervisor', 'unit' => 'Paraguay'],
+    'new_supervisor_history'
+);
+stage6AssertTrue(
+    in_array($oldHistoricalId, $oldSupervisorVisible, true)
+        && !in_array($newHistoricalId, $oldSupervisorVisible, true),
+    'superior anterior conserva únicamente las proformas emitidas durante su asignación'
+);
+stage6AssertTrue(
+    !in_array($oldHistoricalId, $newSupervisorVisible, true)
+        && in_array($newHistoricalId, $newSupervisorVisible, true),
+    'nuevo superior accede únicamente a las proformas emitidas desde el cambio'
+);
 
 echo PHP_EOL . 'Pruebas del dashboard gerencial Etapa 6 completadas.' . PHP_EOL;

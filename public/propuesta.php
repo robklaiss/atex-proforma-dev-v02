@@ -34,6 +34,8 @@ if (!$proforma || empty($proforma['pdf_path'])) {
     exit('Propuesta no encontrada.');
 }
 
+$proforma['is_latest_version'] = proformaIsLatestVersion(db(), (int) $proforma['id']) ? 1 : 0;
+$isSuperseded = proformaIsSuperseded($proforma);
 $isExpired = proformaIsExpired($proforma);
 $canDownloadFinal = proformaCanDownloadFinal($proforma);
 $authorizationStatus = proformaAuthorizationStatus($proforma);
@@ -43,6 +45,9 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $action = (string) ($_POST['action'] ?? '');
         if ($action !== 'request_update') {
             throw new RuntimeException('Accion no valida.');
+        }
+        if ($isSuperseded) {
+            throw new RuntimeException('Esta propuesta fue reemplazada por una versión posterior.');
         }
         if (!$isExpired) {
             throw new RuntimeException('La propuesta todavia esta vigente.');
@@ -92,7 +97,13 @@ $disclaimerSnapshots = loadProformaDisclaimerSnapshots(db(), (int) $proforma['id
     <main class="customer-proposal">
         <section class="customer-proposal-panel">
             <img class="customer-logo" src="<?= e(publicPath('/assets/atex_latam_logo.png')) ?>" alt="ATEX LATAM" width="180">
-            <?php if ($isExpired): ?>
+            <?php if ($isSuperseded): ?>
+                <span class="badge <?= e(proformaExpirationBadgeClass($proforma)) ?> customer-status"><?= e(proformaExpirationLabel($proforma)) ?></span>
+                <h1>Estimado cliente <?= e($customerName) ?></h1>
+                <p class="customer-lead">
+                    Esta es una versión anterior de la proforma. Se conserva disponible para consulta y descarga.
+                </p>
+            <?php elseif ($isExpired): ?>
                 <span class="badge <?= e(proformaExpirationBadgeClass($proforma)) ?> customer-status"><?= e(proformaExpirationLabel($proforma)) ?></span>
                 <h1>Estimado cliente <?= e($customerName) ?></h1>
                 <p class="customer-lead">
@@ -158,7 +169,15 @@ $disclaimerSnapshots = loadProformaDisclaimerSnapshots(db(), (int) $proforma['id
             <?php endif; ?>
 
             <div class="customer-actions">
-                <?php if ($isExpired): ?>
+                <?php if ($isSuperseded): ?>
+                    <?php if (!$isExpired && $canDownloadFinal): ?>
+                        <a class="button primary customer-download-button" href="<?= e($downloadUrl) ?>">Descargar PDF</a>
+                    <?php elseif ($isExpired): ?>
+                        <p class="muted">Esta versión histórica superó su período de validez.</p>
+                    <?php else: ?>
+                        <p class="muted"><?= e(proformaDownloadBlockMessage($proforma)) ?></p>
+                    <?php endif; ?>
+                <?php elseif ($isExpired): ?>
                     <form method="post" class="customer-update-form">
                         <input type="hidden" name="action" value="request_update">
                         <button class="button primary customer-download-button" type="submit">Pedir cotizacion actualizada</button>

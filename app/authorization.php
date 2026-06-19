@@ -121,10 +121,10 @@ function availableProformaAuthorizers(PDO $pdo, array $proforma, int $excludeUse
            ON ucu.user_id = u.id
           AND ucu.country_unit_id = :country_unit_id
          LEFT JOIN country_units cu ON cu.id = :country_unit_id
-         WHERE u.role IN ('supervisor', 'manager', 'director')
+         WHERE u.role IN ('supervisor', 'manager', 'director', 'admin')
            AND u.id <> :exclude_user_id
-           AND (ucu.id IS NOT NULL OR u.unit = cu.name)
-         ORDER BY CASE u.role WHEN 'supervisor' THEN 1 WHEN 'manager' THEN 2 ELSE 3 END,
+           AND (u.role = 'admin' OR ucu.id IS NOT NULL OR u.unit = cu.name)
+         ORDER BY CASE u.role WHEN 'supervisor' THEN 1 WHEN 'manager' THEN 2 WHEN 'director' THEN 3 ELSE 4 END,
                   u.first_name COLLATE NOCASE,
                   u.last_name COLLATE NOCASE,
                   u.username COLLATE NOCASE"
@@ -135,6 +135,62 @@ function availableProformaAuthorizers(PDO $pdo, array $proforma, int $excludeUse
     ]);
 
     return $stmt->fetchAll();
+}
+
+function configuredProformaAuthorizationSuperior(
+    PDO $pdo,
+    int $sellerId,
+    int $countryUnitId
+): array {
+    if ($sellerId <= 0) {
+        throw new RuntimeException('No se pudo identificar al emisor de la proforma.');
+    }
+    if ($countryUnitId <= 0) {
+        throw new RuntimeException('No se pudo identificar la unidad país de la proforma.');
+    }
+
+    $stmt = $pdo->prepare(
+        'SELECT leader.*
+         FROM users seller
+         LEFT JOIN users leader ON leader.id = seller.reports_to_id
+         WHERE seller.id = :seller_id
+         LIMIT 1'
+    );
+    $stmt->execute([':seller_id' => $sellerId]);
+    $superior = $stmt->fetch();
+    if (!$superior || (int) ($superior['id'] ?? 0) <= 0) {
+        throw new RuntimeException(
+            'El emisor de la proforma no tiene un superior configurado en su perfil.'
+        );
+    }
+    if (!canDecideProformaAuthorization($superior)) {
+        throw new RuntimeException(
+            'El superior configurado en el perfil del emisor no tiene permisos para autorizar proformas.'
+        );
+    }
+
+    $unitStmt = $pdo->prepare(
+        'SELECT 1
+         FROM users u
+         LEFT JOIN user_country_units ucu
+           ON ucu.user_id = u.id
+          AND ucu.country_unit_id = :country_unit_id
+         LEFT JOIN country_units cu ON cu.id = :country_unit_id
+         WHERE u.id = :user_id
+           AND (u.role = \'admin\' OR ucu.id IS NOT NULL OR u.unit = cu.name)
+         LIMIT 1'
+    );
+    $unitStmt->execute([
+        ':country_unit_id' => $countryUnitId,
+        ':user_id' => (int) $superior['id'],
+    ]);
+    if (!$unitStmt->fetchColumn()) {
+        throw new RuntimeException(
+            'El superior configurado en el perfil del emisor no está habilitado para la unidad país de la proforma.'
+        );
+    }
+
+    return $superior;
 }
 
 function findAuthorizationReassignmentSuperior(
@@ -412,6 +468,7 @@ function requestProformaAuthorization(
     if (!$proforma) {
         throw new RuntimeException('La proforma seleccionada no existe.');
     }
+    assertProformaIsLatestVersion($pdo, $proformaId);
     if (proformaIsManagerSigned($proforma)) {
         throw new RuntimeException('Esta proforma está firmada por un gerente y no requiere autorización.');
     }
@@ -431,7 +488,7 @@ function requestProformaAuthorization(
         }
     }
     if (!$selected) {
-        throw new RuntimeException('El supervisor, gerente o director seleccionado no está disponible para esta unidad país.');
+        throw new RuntimeException('El superior seleccionado no está disponible para esta unidad país.');
     }
 
     $pending = $pdo->prepare(
@@ -507,6 +564,48 @@ function requestProformaAuthorization(
     return findProformaAuthorizationById($pdo, $authorizationId) ?? [];
 }
 
+function requestProformaAuthorizationFromConfiguredSuperior(
+    PDO $pdo,
+    int $proformaId,
+    int $requestedBy
+): array {
+    if ($proformaId <= 0 || $requestedBy <= 0) {
+        throw new RuntimeException('No se pudo crear la solicitud automática de autorización.');
+    }
+
+    $stmt = $pdo->prepare(
+        'SELECT p.id, p.seller_id, p.country_unit_id, p.superior_id_snapshot
+         FROM proformas p
+         WHERE p.id = :id
+         LIMIT 1'
+    );
+    $stmt->execute([':id' => $proformaId]);
+    $proforma = $stmt->fetch();
+    if (!$proforma) {
+        throw new RuntimeException('La proforma seleccionada no existe.');
+    }
+
+    $sellerId = (int) ($proforma['seller_id'] ?? 0);
+    $superior = configuredProformaAuthorizationSuperior(
+        $pdo,
+        $sellerId,
+        (int) ($proforma['country_unit_id'] ?? 0)
+    );
+    $snapshotSuperiorId = (int) ($proforma['superior_id_snapshot'] ?? 0);
+    if ($snapshotSuperiorId <= 0 || $snapshotSuperiorId !== (int) $superior['id']) {
+        throw new RuntimeException(
+            'El superior registrado en la proforma no coincide con el perfil actual del emisor.'
+        );
+    }
+
+    return requestProformaAuthorization(
+        $pdo,
+        $proformaId,
+        $requestedBy,
+        $snapshotSuperiorId
+    );
+}
+
 function validateAuthorizationDecisionUser(array $authorization, int $decidedBy, ?array $decider): void
 {
     if ($decidedBy <= 0 || !$decider || !canDecideProformaAuthorization($decider)) {
@@ -530,6 +629,7 @@ function approveProformaAuthorization(
     if (!$authorization) {
         throw new RuntimeException('La solicitud de autorización no existe.');
     }
+    assertProformaIsLatestVersion($pdo, (int) $authorization['proforma_id']);
 
     $deciderStmt = $pdo->prepare('SELECT * FROM users WHERE id = :id LIMIT 1');
     $deciderStmt->execute([':id' => $decidedBy]);
@@ -638,6 +738,7 @@ function rejectProformaAuthorization(
     if (!$authorization) {
         throw new RuntimeException('La solicitud de autorización no existe.');
     }
+    assertProformaIsLatestVersion($pdo, (int) $authorization['proforma_id']);
 
     $deciderStmt = $pdo->prepare('SELECT * FROM users WHERE id = :id LIMIT 1');
     $deciderStmt->execute([':id' => $decidedBy]);

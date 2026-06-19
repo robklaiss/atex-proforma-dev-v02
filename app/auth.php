@@ -405,15 +405,21 @@ function proformaVisibilityClause(
         return [$sellerIdSql . ' = :' . $paramPrefix . '_id', $params];
     }
 
+    if ($mode === 'team') {
+        $params[':' . $paramPrefix . '_superior_id'] = $userId;
+        $params[':' . $paramPrefix . '_self_id'] = $userId;
+        return [
+            '(' . $proformaAlias . '.superior_id_snapshot = :' . $paramPrefix . '_superior_id'
+            . ' OR ' . $sellerIdSql . ' = :' . $paramPrefix . '_self_id)',
+            $params,
+        ];
+    }
+
     $teamIds = visibleTeamUserIds($userId);
     if ($teamIds === []) {
         return ['1 = 0', []];
     }
     $teamSql = $sellerIdSql . ' IN (' . sqlInPlaceholders($teamIds, $paramPrefix . '_team', $params) . ')';
-
-    if ($mode === 'team') {
-        return [$teamSql, $params];
-    }
 
     $unitParts = [
         'NULLIF(' . $proformaAlias . ".signer_unit, '')",

@@ -92,6 +92,10 @@ $paraguayId = (int) $paraguay['id'];
 foreach ($userIds as $userId) {
     syncUserCountryUnits($pdo, $userId, [$paraguayId]);
 }
+$pdo->prepare('UPDATE users SET reports_to_id = :supervisor_id WHERE id = :user_id')->execute([
+    ':supervisor_id' => $userIds['supervisor'],
+    ':user_id' => $userIds['executive'],
+]);
 $pdo->prepare('UPDATE users SET reports_to_id = :director_id WHERE id = :user_id')->execute([
     ':director_id' => $userIds['director'],
     ':user_id' => $userIds['demoted-supervisor'],
@@ -137,7 +141,8 @@ $insertProforma = static function (
           project_name, emission_date, expiration_date, validity_days, expires_at,
           currency_code, currency_mode, currency_symbol, country_unit_id, exchange_rate_used,
           exchange_rate_source, authorization_status, subtotal, tax_total, total,
-          seller_id, signer_role, signer_name, signer_position, signer_email, signer_phone, signer_unit,
+          seller_id, superior_id_snapshot, superior_snapshot_captured,
+          signer_role, signer_name, signer_position, signer_email, signer_phone, signer_unit,
           signer_signature_image, created_by, created_at)
          VALUES
          (:number, :project_id, :parent_id, :version_number, :project_sequence,
@@ -145,7 +150,8 @@ $insertProforma = static function (
           \'Edificio Puerto Ibiza\', \'2026-06-17\', \'2026-06-27\', 10, :expires_at,
           :currency_code, :currency_mode, :currency_symbol, :country_unit_id, :exchange_rate_used,
           :exchange_rate_source, :authorization_status, 100, 10, 110,
-          :seller_id, :signer_role, :signer_name, :signer_position, :signer_email, :signer_phone, :signer_unit,
+          :seller_id, :superior_id_snapshot, 1,
+          :signer_role, :signer_name, :signer_position, :signer_email, :signer_phone, :signer_unit,
           :signer_signature_image, :created_by, \'2026-06-17 12:00:00\')'
     );
     $stmt->execute([
@@ -165,6 +171,7 @@ $insertProforma = static function (
         ':exchange_rate_source' => $currency['exchange_rate_source'],
         ':authorization_status' => $currency['authorization_status'],
         ':seller_id' => $sellerId,
+        ':superior_id_snapshot' => (int) ($signer['reports_to_id'] ?? 0) ?: null,
         ':signer_role' => (string) ($signer['role'] ?? ''),
         ':signer_name' => $signature['name'],
         ':signer_position' => $signature['position'],
@@ -236,14 +243,37 @@ $localSupervisorId = $insertProforma(
 $localSupervisor = $pdo->query('SELECT * FROM proformas WHERE id = ' . $localSupervisorId)->fetch();
 assertSameValue('PENDING', $localSupervisor['authorization_status'], 'proforma LOCAL queda PENDING');
 assertSameValue(false, proformaCanDownloadFinal($localSupervisor), 'proforma LOCAL pendiente bloquea descarga final');
+assertThrows(
+    static fn (): array => configuredProformaAuthorizationSuperior(
+        $pdo,
+        $userIds['orphan-supervisor'],
+        $paraguayId
+    ),
+    'proforma local no admite un emisor sin superior configurado'
+);
 
-$supervisorRequest = requestProformaAuthorization(
+$supervisorRequest = requestProformaAuthorizationFromConfiguredSuperior(
     $pdo,
     $localSupervisorId,
-    $userIds['executive'],
-    $userIds['supervisor']
+    $userIds['executive']
 );
-assertSameValue('supervisor', $supervisorRequest['requested_role'], 'solicita autorización a Supervisor');
+assertSameValue(
+    $userIds['supervisor'],
+    (int) $supervisorRequest['requested_to'],
+    'solicitud automática se asigna al superior configurado'
+);
+assertSameValue('supervisor', $supervisorRequest['requested_role'], 'superior automático conserva su rol');
+assertSameValue(
+    1,
+    (int) $pdo->query(
+        "SELECT COUNT(*)
+         FROM notifications
+         WHERE user_id = {$userIds['supervisor']}
+           AND type = 'PROFORMA_AUTHORIZATION_REQUESTED'
+           AND related_entity_id = " . (int) $supervisorRequest['id']
+    )->fetchColumn(),
+    'solicitud automática genera notificación interna al superior'
+);
 assertSameValue(
     1,
     pendingProformaAuthorizationCount($pdo, $userIds['supervisor']),
@@ -428,7 +458,13 @@ assertSameValue('EPI-20260617-001', $originalAfterEdit['proforma_number'], 'edic
 assertSameValue($usdId, (int) $version['parent_proforma_id'], 'edición mantiene parent_proforma_id');
 assertSameValue(2, (int) $version['version_number'], 'edición crea la siguiente versión');
 assertTrueValue((int) $version['project_sequence'] > (int) $originalAfterEdit['project_sequence'], 'edición aumenta secuencial del proyecto');
-assertSameValue(3, nextProformaVersionNumber($pdo, $usdId), 'editar una versión antigua calcula la siguiente versión real');
+assertSameValue(false, proformaIsLatestVersion($pdo, $usdId), 'la versión anterior deja de ser editable');
+assertSameValue(true, proformaIsLatestVersion($pdo, $versionId), 'la nueva versión queda como única editable');
+assertSameValue(3, nextProformaVersionNumber($pdo, $versionId), 'la versión vigente calcula la siguiente versión real');
+assertThrows(
+    static fn (): null => assertProformaIsLatestVersion($pdo, $usdId),
+    'una versión reemplazada no puede volver a editarse'
+);
 
 $historicalProject = resolveProject($pdo, 'Proyecto Histórico Etapa 4');
 $historicalId = $insertProforma(

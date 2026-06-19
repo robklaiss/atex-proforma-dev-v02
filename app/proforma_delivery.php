@@ -90,13 +90,27 @@ function proformaIsExpired(array $proforma): bool
     return $expirationDate < date('Y-m-d');
 }
 
+function proformaIsSuperseded(array $proforma): bool
+{
+    return array_key_exists('is_latest_version', $proforma)
+        && (int) $proforma['is_latest_version'] !== 1;
+}
+
 function proformaExpirationLabel(array $proforma): string
 {
+    if (proformaIsSuperseded($proforma)) {
+        return 'Reemplazada';
+    }
+
     return proformaIsExpired($proforma) ? 'Vencido' : 'Vigente';
 }
 
 function proformaExpirationBadgeClass(array $proforma): string
 {
+    if (proformaIsSuperseded($proforma)) {
+        return 'warning';
+    }
+
     return proformaIsExpired($proforma) ? 'danger' : 'success';
 }
 

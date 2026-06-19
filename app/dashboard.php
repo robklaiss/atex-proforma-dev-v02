@@ -105,7 +105,17 @@ function dashboardBuildFilters(array $input, array $allowedUnits, array $allowed
 function dashboardWhere(array $filters, array &$params): string
 {
     $unitExpression = "COALESCE(NULLIF(cu.name, ''), NULLIF(p.signer_unit, ''), NULLIF(seller.unit, ''), c.pais)";
-    $where = ['p.emission_date >= :date_from', 'p.emission_date <= :date_to'];
+    $where = [
+        'p.emission_date >= :date_from',
+        'p.emission_date <= :date_to',
+        'NOT EXISTS (
+            SELECT 1
+            FROM proformas replacement
+            WHERE replacement.parent_proforma_id = p.id
+              AND replacement.project_id = p.project_id
+              AND COALESCE(replacement.company_id, replacement.client_id) = COALESCE(p.company_id, p.client_id)
+        )',
+    ];
     $params = [':date_from' => $filters['from'], ':date_to' => $filters['to']];
 
     $allowedUnits = $filters['allowed_unit_names'] ?? [];

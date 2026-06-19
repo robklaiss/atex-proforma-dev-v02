@@ -29,7 +29,7 @@ renderHeader('Ingresar', false);
 ?>
 <section class="login-panel">
     <div class="login-logo">
-        <img class="brand-logo" src="<?= e(publicPath('/assets/atex_latam_logo.png')) ?>" alt="ATEX LATAM" width="160">
+        <img class="brand-logo" src="<?= e(publicPath('/assets/atex-paraguay.png')) ?>" alt="ATEX Paraguay" width="160">
     </div>
     <?php if (!is_file(SQLITE_PATH)): ?>
         <div class="flash error">La base de datos no existe. Ejecuta <code>php scripts/install.php</code>.</div>

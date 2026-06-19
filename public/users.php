@@ -92,11 +92,13 @@ function deleteSystemUser(int $userId, int $replacementUserId): void
             ['UPDATE proformas
               SET created_by = CASE WHEN created_by = :user_id THEN :replacement_id ELSE created_by END,
                   seller_id = CASE WHEN seller_id = :user_id THEN NULL ELSE seller_id END,
+                  superior_id_snapshot = CASE WHEN superior_id_snapshot = :user_id THEN NULL ELSE superior_id_snapshot END,
                   won_by = CASE WHEN won_by = :user_id THEN NULL ELSE won_by END,
                   commercial_status_updated_by = CASE WHEN commercial_status_updated_by = :user_id THEN NULL ELSE commercial_status_updated_by END,
                   exchange_rate_authorized_by = CASE WHEN exchange_rate_authorized_by = :user_id THEN NULL ELSE exchange_rate_authorized_by END
               WHERE created_by = :user_id
                  OR seller_id = :user_id
+                 OR superior_id_snapshot = :user_id
                  OR won_by = :user_id
                  OR commercial_status_updated_by = :user_id
                  OR exchange_rate_authorized_by = :user_id', [

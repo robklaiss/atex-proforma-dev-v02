@@ -228,6 +228,16 @@ function formatMoney(float $amount, ?string $currencyCode = null): string
     return formatMoneyWithSymbol($amount, $currencyCode, (string) $currency['symbol']);
 }
 
+function formatUsdUnitPrice(float $amount): string
+{
+    $decimals = 4;
+    while ($decimals > 2 && abs($amount - round($amount, $decimals - 1)) < 0.00000001) {
+        $decimals--;
+    }
+
+    return 'US$ ' . number_format($amount, $decimals, '.', ',');
+}
+
 function formatMoneyWithSymbol(float $amount, string $currencyCode, string $currencySymbol): string
 {
     $currencyCode = strtoupper(trim($currencyCode));
@@ -268,6 +278,15 @@ function formatProformaMoney(float $amount, array $proforma): string
     }
 
     return formatMoney($amount, 'USD');
+}
+
+function formatProformaUnitPrice(float $amount, array $proforma): string
+{
+    if (normalizeProformaCurrencyMode((string) ($proforma['currency_mode'] ?? 'USD')) === 'LOCAL') {
+        return formatProformaMoney($amount, $proforma);
+    }
+
+    return formatUsdUnitPrice($amount);
 }
 
 function formatMoneyBreakdown(array $amountsByCurrency): array

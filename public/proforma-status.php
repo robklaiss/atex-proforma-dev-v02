@@ -36,6 +36,7 @@ try {
     if (!$stmt->fetch()) {
         throw new RuntimeException('La proforma seleccionada no existe o no está dentro de tu alcance.');
     }
+    assertProformaIsLatestVersion(db(), $proformaId);
 
     createDatabaseBackup();
     $updated = updateProformaCommercialStatus(

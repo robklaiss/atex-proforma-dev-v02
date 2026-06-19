@@ -1,4 +1,8 @@
-# ATEX Proforma
+# ATEX Proforma — deploy completo
+
+Este directorio contiene el código actual y una base migrada para reemplazo
+manual controlado. Antes de copiarlo al servidor, leer
+`DEPLOY-ON-SERVER.md`.
 
 Sistema simple en PHP 8 + SQLite para cargar clientes y productos, administrar impuestos, generar proformas en PDF y operar backups/restauracion de la base de datos.
 
@@ -233,6 +237,8 @@ CANCELLED
 
 `authorization_status` no se modifica al actualizar el resultado comercial. Los importes del dashboard usan `proformas.total`, que es el monto base histórico en USD; las proformas locales conservan `exchange_rate_used` como snapshot y no se recalculan con el cambio vigente.
 
+Los indicadores consideran únicamente la edición vigente de una propuesta: cuando una nueva versión sustituye a otra para el mismo proyecto y cliente, la versión anterior deja de sumar tanto en cantidad como en monto. Un clon del mismo proyecto emitido para otro cliente se contabiliza como una propuesta nueva.
+
 La migración incremental crea un backup `backup_YYYY-MM-DD_HH-mm-ss_pre-dashboard-stage6.sqlite` antes de agregar los campos comerciales.
 
 Prueba automatizada:
@@ -268,7 +274,7 @@ sqlite3 storage/database/app.sqlite "PRAGMA foreign_key_check;"
 | Notas y disclaimers | Sí | Sí | Sí | Sí | No | No |
 | Dashboard gerencial | Sí | Sí | Sí | Sí | No | No |
 | Crear/editar proformas | Sí | No | Sí | Sí | Sí | No |
-| Solicitar autorización | Sí | No | Sí | Sí | Sí | No |
+| Generar solicitud automática al superior | Sí | No | Sí | Sí | Sí | No |
 | Decidir autorización asignada | Sí | Sí | Sí | Sí | No | No |
 | Cambiar estado comercial | Sí | Sí | Sí | Sí | Sí | No |
 | Descargar proformas visibles autorizadas | Sí | Sí | Sí | Sí | Sí | No |
@@ -291,7 +297,7 @@ Flujo de autorización:
 
 1. Una proforma USD queda `NOT_REQUIRED`.
 2. Una proforma local queda `PENDING` y bloquea la descarga final.
-3. El creador solicita autorización a Supervisor, Gerente o Director de la unidad.
+3. Al guardar una proforma local, el sistema solicita automáticamente la autorización al superior configurado en el perfil del emisor.
 4. El autorizador confirma el cambio general, define un cambio especial o rechaza con comentario.
 5. Al aprobar, se actualiza el snapshot de cambio y se regenera el PDF.
 
@@ -365,7 +371,7 @@ La carga de proformas termina con el botón principal `Guardar` y redirige a un 
 
 - Las proformas USD quedan `NOT_REQUIRED` y permiten descarga directa.
 - Las proformas en moneda local quedan `PENDING` y bloquean la descarga final hasta su aprobación.
-- La solicitud se asigna a un Supervisor, Gerente o Director de la misma unidad país y genera una notificación interna.
+- La solicitud se asigna automáticamente al superior configurado en el perfil del emisor y genera una notificación interna. Si no existe un superior habilitado para autorizar en esa unidad país, la proforma local no se guarda.
 - Si un autorizador pierde ese permiso, sus solicitudes pendientes se reasignan al primer superior habilitado de su cadena para la unidad correspondiente. El cambio de rol se cancela si no existe un destino válido.
 - El autorizador puede confirmar el cambio general vigente, aprobar un cambio `SPECIAL` exclusivo para la proforma o rechazar con comentario.
 - Un cambio especial actualiza únicamente el snapshot de la proforma y no modifica `exchange_rates`.
@@ -378,5 +384,9 @@ La trazabilidad se guarda en:
 - `proforma_events`
 
 La firma comercial usa los datos del usuario (`first_name`, `last_name`, `commercial_position`, `email`, `phone`, `unit`, `signature_image`) y conserva snapshots en la proforma. La imagen manuscrita es opcional, debe ser PNG y se guarda en `storage/signatures`.
+
+Cada emisión también conserva `superior_id_snapshot`, correspondiente al superior del vendedor en el momento de crear la proforma. Los cambios posteriores en `users.reports_to_id` se aplican únicamente a nuevas emisiones; las proformas anteriores continúan visibles para el superior histórico. `superior_snapshot_captured` distingue correctamente una emisión creada sin superior de un registro pendiente de migración.
+
+Antes de incorporar este snapshot en una base existente se genera automáticamente `backup_YYYY-MM-DD_HH-mm-ss_pre-superior-snapshot.sqlite`. Las proformas previas reciben como referencia inicial el superior configurado al ejecutar la migración, ya que la base anterior no almacenaba ese historial.
 
 La migración incremental de Etapa 4 crea automáticamente un backup `backup_YYYY-MM-DD_HH-mm-ss_pre-authorization-stage4.sqlite` antes de agregar el esquema nuevo. Las proformas históricas quedan `NOT_REQUIRED`, sin renumeración ni recálculo de importes, monedas o vencimientos.

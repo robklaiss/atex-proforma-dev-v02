@@ -542,7 +542,7 @@ function drawProformaDetailedItemsTable(SimplePdf $pdf, array $items, int $visua
         $desc = $pdf->truncate((string) ($item['description'] ?? ''), 215, 9);
         $pdf->text($tableX, $rowY + 10, formatNumber((float) $item['quantity']), 9, 'regular', $text, $columns[0], 'center');
         $pdf->text($tableX + $columns[0] + 10, $rowY + 10, $desc, 9, 'regular', $text);
-        $pdf->text($tableX + $columns[0] + $columns[1], $rowY + 10, formatProformaMoney((float) $item['unit_price'], $proforma), 9, 'bold', $text, $columns[2] - 10, 'right');
+        $pdf->text($tableX + $columns[0] + $columns[1], $rowY + 10, formatProformaUnitPrice((float) $item['unit_price'], $proforma), 9, 'bold', $text, $columns[2] - 10, 'right');
         $pdf->text($tableX + $columns[0] + $columns[1] + $columns[2], $rowY + 10, formatInteger((int) $item['rental_days']), 9, 'regular', $text, $columns[3], 'center');
         $pdf->text($tableX + $columns[0] + $columns[1] + $columns[2] + $columns[3], $rowY + 10, formatProformaMoney((float) $item['total'], $proforma), 9, 'bold', $text, $columns[4] - 8, 'right');
     }

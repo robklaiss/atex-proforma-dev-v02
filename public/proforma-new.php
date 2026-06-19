@@ -50,6 +50,14 @@ if ($editId > 0 || $cloneId > 0) {
         setFlash('error', 'La proforma esta marcada como venta ganada y solo un administrador puede editarla.');
         redirect('/proformas.php');
     }
+    if ($editId > 0 || $cloneId > 0) {
+        try {
+            assertProformaIsLatestVersion($pdo, $sourceId);
+        } catch (RuntimeException $exception) {
+            setFlash('error', $exception->getMessage());
+            redirect('/proforma-preview.php?id=' . $sourceId);
+        }
+    }
 
     $sourceItemsStmt = $pdo->prepare('SELECT * FROM proforma_items WHERE proforma_id = :id ORDER BY id');
     $sourceItemsStmt->execute([':id' => $sourceId]);
@@ -69,7 +77,7 @@ foreach (salesSignerRoles() as $index => $role) {
 }
 $signersStmt = $pdo->prepare(
     'SELECT id, username, role, first_name, last_name, email, phone, unit,
-            commercial_position, signature_image
+            reports_to_id, commercial_position, signature_image
      FROM users
      WHERE role IN (' . implode(', ', $signerRolePlaceholders) . ')
      ORDER BY first_name COLLATE NOCASE, last_name COLLATE NOCASE, username COLLATE NOCASE'
@@ -124,7 +132,7 @@ $itemPayload = static function (array $item) use ($productMap): array {
     $productName = is_array($product) ? (string) $product['nombre'] : (string) ($item['description'] ?? '');
     $salePrice = is_array($product) ? (float) $product['precio_venta'] : (float) ($item['unit_price'] ?? 0);
     $storedRentalPrice = is_array($product) ? (float) $product['precio_alquiler'] : 0.0;
-    $defaultCondition = stripos($productName, 'ALQUILER') === 0 ? 'alquiler' : 'venta';
+    $defaultCondition = is_array($product) ? productDefaultCondition($product) : 'venta';
     $rentalPrice = $storedRentalPrice > 0 ? $storedRentalPrice : ($defaultCondition === 'alquiler' ? $salePrice : 0.0);
 
     return [
@@ -285,6 +293,14 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             $currencySnapshot,
             $signerMap[$sellerId]
         );
+        $automaticAuthorizationSuperior = null;
+        if ($currencySnapshot['authorization_status'] === 'PENDING') {
+            $automaticAuthorizationSuperior = configuredProformaAuthorizationSuperior(
+                $pdo,
+                $sellerId,
+                $countryUnitId
+            );
+        }
         if (
             $shouldSendEmail
             && $currencySnapshot['currency_mode'] === 'LOCAL'
@@ -362,7 +378,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 'condition_type' => $conditionType,
                 'quantity' => $quantity,
                 'rental_days' => $calculated['rental_days'],
-                'unit_price' => round($unitPrice, 2),
+                'unit_price' => round($unitPrice, 4),
                 'tax_id' => $taxId,
                 'tax_rate' => $taxRate,
                 'subtotal' => $calculated['subtotal'],
@@ -388,6 +404,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $pdfPath = null;
 
         try {
+            if ($isEditMode || $isCloneMode) {
+                assertProformaIsLatestVersion($pdo, (int) $sourceProforma['id']);
+            }
+
             $company = resolveCompanyFromQuote(
                 $pdo,
                 $companyRuc,
@@ -469,7 +489,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                   currency_code, currency_mode, currency_symbol, country_unit_id, exchange_rate_used,
                   exchange_rate_source, exchange_rate_authorized_by, exchange_rate_authorized_at, authorization_status,
                   format_type, subtotal, discount_percent, discount_amount, tax_total, total,
-                  seller_id, signer_role, signer_name, signer_position, signer_email, signer_phone, signer_unit,
+                  seller_id, superior_id_snapshot, superior_snapshot_captured,
+                  signer_role, signer_name, signer_position, signer_email, signer_phone, signer_unit,
                   signer_signature_image, created_by, created_at)
                  VALUES
                  (:proforma_number, :project_id, :parent_proforma_id, :version_number, :project_sequence,
@@ -480,7 +501,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                   :currency_code, :currency_mode, :currency_symbol, :country_unit_id, :exchange_rate_used,
                   :exchange_rate_source, NULL, NULL, :authorization_status,
                   :format_type, :subtotal, :discount_percent, :discount_amount, :tax_total, :total,
-                  :seller_id, :signer_role, :signer_name, :signer_position, :signer_email, :signer_phone, :signer_unit,
+                  :seller_id, :superior_id_snapshot, 1,
+                  :signer_role, :signer_name, :signer_position, :signer_email, :signer_phone, :signer_unit,
                   :signer_signature_image, :created_by, :created_at)'
             );
             $insert->execute([
@@ -520,6 +542,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 ':tax_total' => round($taxTotal, 2),
                 ':total' => round($grandTotal, 2),
                 ':seller_id' => $sellerId,
+                ':superior_id_snapshot' => (int) ($signerMap[$sellerId]['reports_to_id'] ?? 0) ?: null,
                 ':signer_role' => (string) $signerMap[$sellerId]['role'],
                 ':signer_name' => $signature['name'],
                 ':signer_position' => $signature['position'],
@@ -573,6 +596,15 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 ]);
             }
 
+            $automaticAuthorization = null;
+            if ($currencySnapshot['authorization_status'] === 'PENDING') {
+                $automaticAuthorization = requestProformaAuthorizationFromConfiguredSuperior(
+                    $pdo,
+                    $proformaId,
+                    $sellerId
+                );
+            }
+
             $proformaData = [
                 'proforma_number' => $number,
                 'project_name' => $projectName,
@@ -617,6 +649,24 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 ':id' => $proformaId,
             ]);
             $pdo->commit();
+
+            if ($automaticAuthorization !== null) {
+                try {
+                    sendProformaAuthorizationRequestEmail($pdo, (int) $automaticAuthorization['id']);
+                    setFlash(
+                        'success',
+                        'Solicitud de autorización enviada automáticamente a '
+                            . userFullName($automaticAuthorizationSuperior)
+                            . '.'
+                    );
+                } catch (Throwable $authorizationMailException) {
+                    setFlash(
+                        'error',
+                        'La solicitud de autorización quedó registrada, pero no se pudo enviar el email al superior: '
+                            . $authorizationMailException->getMessage()
+                    );
+                }
+            }
 
             if ($shouldSendEmail) {
                 try {
@@ -956,7 +1006,7 @@ renderHeader($pageTitle);
                         $productName = (string) $product['nombre'];
                         $salePrice = (float) $product['precio_venta'];
                         $storedRentalPrice = (float) $product['precio_alquiler'];
-                        $defaultCondition = stripos($productName, 'ALQUILER') === 0 ? 'alquiler' : 'venta';
+                        $defaultCondition = productDefaultCondition($product);
                         $rentalPrice = $storedRentalPrice > 0 ? $storedRentalPrice : ($defaultCondition === 'alquiler' ? $salePrice : 0.0);
                         ?>
                         <option
@@ -1047,7 +1097,7 @@ renderHeader($pageTitle);
             </select>
         </td>
         <td><input type="number" min="0.01" step="0.01" data-name="quantity" value="1" class="calc-input"></td>
-        <td><input type="number" min="0" step="0.01" data-name="unit_price" value="0" class="calc-input"></td>
+        <td><input type="number" min="0" step="0.0001" data-name="unit_price" value="0" class="calc-input"></td>
         <td><input type="number" min="1" step="1" data-name="rental_days" value="1" class="calc-input days-input" disabled></td>
         <td>
             <select data-name="tax_id" class="tax-select">

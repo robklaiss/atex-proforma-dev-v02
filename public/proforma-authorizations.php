@@ -12,58 +12,13 @@ $pdo = db();
 $currentUser = currentUser();
 $currentUserId = (int) ($currentUser['id'] ?? 0);
 $isAdminUser = isAdmin($currentUser);
+$authorizationStatusLabels = authorizationStatusOptions();
 $error = null;
-
-$loadVisibleProforma = static function (int $proformaId) use ($pdo, $currentUser): ?array {
-    [$visibilitySql, $visibilityParams] = proformaVisibilityClause(
-        $currentUser,
-        'p',
-        'seller',
-        'c',
-        'authorization_visible'
-    );
-    $stmt = $pdo->prepare(
-        'SELECT p.*, c.empresa, c.pais, project.name AS canonical_project_name,
-                cu.name AS country_unit_name
-         FROM proformas p
-         JOIN clients c ON c.id = p.client_id
-         LEFT JOIN users seller ON seller.id = p.seller_id
-         LEFT JOIN projects project ON project.id = p.project_id
-         LEFT JOIN country_units cu ON cu.id = p.country_unit_id
-         WHERE p.id = :id
-           AND ' . $visibilitySql . '
-         LIMIT 1'
-    );
-    $stmt->execute([':id' => $proformaId] + $visibilityParams);
-    $proforma = $stmt->fetch();
-
-    return is_array($proforma) ? $proforma : null;
-};
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     try {
         verifyCsrf();
         $action = (string) ($_POST['action'] ?? '');
-
-        if ($action === 'request') {
-            $proformaId = max(0, (int) ($_POST['proforma_id'] ?? 0));
-            $requestedTo = max(0, (int) ($_POST['requested_to'] ?? 0));
-            $proforma = $loadVisibleProforma($proformaId);
-            if (!$proforma) {
-                throw new RuntimeException('La proforma seleccionada no existe o no está visible.');
-            }
-
-            createDatabaseBackup();
-            $authorization = requestProformaAuthorization($pdo, $proformaId, $currentUserId, $requestedTo);
-            try {
-                sendProformaAuthorizationRequestEmail($pdo, (int) $authorization['id']);
-                setFlash('success', 'Solicitud de autorización creada y enviada por email.');
-            } catch (Throwable $mailException) {
-                setFlash('success', 'Solicitud de autorización creada y visible en el sistema.');
-                setFlash('error', 'No se pudo enviar el email al autorizador: ' . $mailException->getMessage());
-            }
-            redirect('/proforma-preview.php?id=' . $proformaId);
-        }
 
         if ($action === 'approve') {
             if (!canDecideProformaAuthorization($currentUser)) {
@@ -108,12 +63,6 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     }
 }
 
-$requestProformaId = max(0, (int) ($_GET['proforma_id'] ?? 0));
-$requestProforma = $requestProformaId > 0 ? $loadVisibleProforma($requestProformaId) : null;
-$requestAuthorizers = $requestProforma
-    ? availableProformaAuthorizers($pdo, $requestProforma, $currentUserId)
-    : [];
-
 $authorizationSelect = '
     SELECT a.*,
            p.proforma_number, p.project_name, p.currency_mode, p.currency_code, p.currency_symbol,
@@ -142,6 +91,13 @@ $receivedStmt->execute([
     ':is_admin' => $isAdminUser ? 1 : 0,
 ]);
 $received = $receivedStmt->fetchAll();
+foreach ($received as &$authorization) {
+    $authorization['is_latest_version'] = proformaIsLatestVersion(
+        $pdo,
+        (int) $authorization['proforma_id']
+    ) ? 1 : 0;
+}
+unset($authorization);
 
 $sentStmt = $pdo->prepare(
     $authorizationSelect . '
@@ -167,50 +123,6 @@ renderHeader('Autorizaciones');
 ?>
 <?php if ($error): ?><div class="flash error"><?= e($error) ?></div><?php endif; ?>
 
-<?php if ($requestProforma): ?>
-    <section class="panel">
-        <h2>Solicitar autorización</h2>
-        <?php if (proformaIsManagerSigned($requestProforma)): ?>
-            <p class="flash info">Esta proforma está firmada por un gerente y no requiere autorización, sin importar la moneda.</p>
-        <?php elseif (normalizeProformaCurrencyMode((string) $requestProforma['currency_mode']) !== 'LOCAL'): ?>
-            <p class="flash info">Esta proforma está en dólares y no requiere autorización de tipo de cambio.</p>
-        <?php elseif (proformaAuthorizationStatus($requestProforma) !== 'PENDING'): ?>
-            <p class="flash info">La proforma ya no está pendiente de autorización.</p>
-        <?php elseif ($requestAuthorizers === []): ?>
-            <p class="flash warning">No hay supervisores, gerentes o directores disponibles para la unidad país de esta proforma.</p>
-        <?php else: ?>
-            <div class="tracking-grid authorization-summary">
-                <div><span class="muted">Proforma</span><strong><?= e($requestProforma['proforma_number']) ?></strong></div>
-                <div><span class="muted">Proyecto</span><strong><?= e(proformaProjectName($requestProforma)) ?></strong></div>
-                <div><span class="muted">Empresa</span><strong><?= e($requestProforma['company_name_snapshot'] ?: $requestProforma['empresa']) ?></strong></div>
-                <div><span class="muted">Unidad país</span><strong><?= e($requestProforma['country_unit_name'] ?? '') ?></strong></div>
-            </div>
-            <form method="post" class="grid-form authorization-request-form">
-                <?= csrfField() ?>
-                <input type="hidden" name="action" value="request">
-                <input type="hidden" name="proforma_id" value="<?= (int) $requestProforma['id'] ?>">
-                <label class="wide">
-                    Supervisor, Gerente o Director
-                    <select name="requested_to" required>
-                        <option value="">Seleccionar superior</option>
-                        <?php foreach ($requestAuthorizers as $authorizer): ?>
-                            <option value="<?= (int) $authorizer['id'] ?>">
-                                <?= e(userRoleLabel((string) $authorizer['role']) . ' · ' . userFullName($authorizer)) ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                </label>
-                <div class="form-actions wide">
-                    <button class="button primary" type="submit">Enviar solicitud</button>
-                    <a class="button" href="<?= e(publicPath('/proforma-preview.php?id=' . (int) $requestProforma['id'])) ?>">Cancelar</a>
-                </div>
-            </form>
-        <?php endif; ?>
-    </section>
-<?php elseif ($requestProformaId > 0): ?>
-    <div class="flash error">La proforma seleccionada no existe o no está visible.</div>
-<?php endif; ?>
-
 <section class="panel">
     <h2>Solicitudes recibidas</h2>
     <?php if ($received === []): ?>
@@ -221,6 +133,7 @@ renderHeader('Autorizaciones');
             $activeRate = findActiveExchangeRate($pdo, (int) $authorization['country_unit_id']);
             $globalRate = $activeRate ? (float) $activeRate['rate_from_usd'] : null;
             $canDecideThis = (string) $authorization['status'] === 'PENDING'
+                && (int) $authorization['is_latest_version'] === 1
                 && canDecideProformaAuthorization($currentUser)
                 && ($isAdminUser || (int) $authorization['requested_to'] === $currentUserId);
             ?>
@@ -231,7 +144,7 @@ renderHeader('Autorizaciones');
                         'APPROVED' => 'success',
                         'REJECTED' => 'danger',
                         default => 'warning',
-                    }) ?>"><?= e((string) $authorization['status']) ?></span>
+                    }) ?>"><?= e($authorizationStatusLabels[(string) $authorization['status']] ?? (string) $authorization['status']) ?></span>
                 </div>
                 <div class="tracking-grid">
                     <div><span class="muted">Empresa</span><strong><?= e($authorization['company_name']) ?></strong></div>
@@ -244,6 +157,9 @@ renderHeader('Autorizaciones');
                     <div><span class="muted">Fecha</span><strong><?= e(formatDateTimeShort($authorization['created_at'])) ?></strong></div>
                 </div>
 
+                <?php if ((int) $authorization['is_latest_version'] !== 1): ?>
+                    <p class="flash warning">Esta solicitud pertenece a una versión reemplazada y ya no admite decisiones.</p>
+                <?php endif; ?>
                 <?php if ($canDecideThis): ?>
                     <div class="authorization-actions">
                         <form method="post" class="grid-form">
@@ -308,7 +224,7 @@ renderHeader('Autorizaciones');
                     <tr>
                         <td><?= e($authorization['proforma_number']) ?></td>
                         <td><?= e(userRoleLabel((string) $authorization['requested_role']) . ' · ' . $authorization['requested_to_name']) ?></td>
-                        <td><?= e($authorization['status']) ?></td>
+                        <td><?= e($authorizationStatusLabels[(string) $authorization['status']] ?? (string) $authorization['status']) ?></td>
                         <td>
                             <?php if ($authorization['approved_exchange_rate'] !== null): ?>
                                 <?= e(formatNumber((float) $authorization['approved_exchange_rate']) . ' · ' . (string) $authorization['exchange_rate_source']) ?>

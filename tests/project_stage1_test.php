@@ -93,6 +93,7 @@ $insertVersion->execute([
     ':sequence' => (int) $secondAllocation['sequence'],
     ':emission_date' => '2026-07-09',
 ]);
+$secondProformaId = (int) $pdo->lastInsertId();
 
 $versions = $pdo->query(
     'SELECT proforma_number, parent_proforma_id, version_number, project_sequence
@@ -103,5 +104,8 @@ $versions = $pdo->query(
 assertSameValue(2, count($versions), 'el versionado conserva la emision anterior');
 assertSameValue($firstProformaId, (int) $versions[1]['parent_proforma_id'], 'la nueva version referencia a la anterior');
 assertSameValue(2, (int) $versions[1]['version_number'], 'incrementa version_number');
+assertSameValue(false, proformaIsLatestVersion($pdo, $firstProformaId), 'la versión anterior deja de ser editable');
+assertSameValue(true, proformaIsLatestVersion($pdo, $secondProformaId), 'solo la última versión permanece editable');
+assertSameValue(3, nextProformaVersionNumber($pdo, $secondProformaId), 'la última versión calcula el siguiente número de versión');
 
 echo PHP_EOL . 'Pruebas de proyectos y numeracion completadas.' . PHP_EOL;
